@@ -1,5 +1,6 @@
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
+from telegram.constants import ChatType
 import logging
 
 # लॉगिंग सेटअप
@@ -26,11 +27,11 @@ async def forward_message(update: Update, context):
         logger.error(f"Error forwarding message: {e}")
 
 def main():
-    # Application बनाएं (PTB v20.0+ में नया तरीका)
+    # Application बनाएं
     application = Application.builder().token(TOKEN).build()
     
-    # चैनल पोस्ट हैंडलर जोड़ें
-    application.add_handler(MessageHandler(filters.CHANNEL, forward_message))
+    # चैनल पोस्ट हैंडलर जोड़ें (यहाँ बदलाव किया गया है)
+    application.add_handler(MessageHandler(filters.ChatType.CHANNELS, forward_message))
     
     # बॉट स्टार्ट करें
     application.run_polling()
