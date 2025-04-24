@@ -1,6 +1,5 @@
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
-from telegram.constants import ChatType
 import logging
 
 # लॉगिंग सेटअप
@@ -30,8 +29,8 @@ def main():
     # Application बनाएं
     application = Application.builder().token(TOKEN).build()
     
-    # चैनल पोस्ट हैंडलर जोड़ें (यहाँ बदलाव किया गया है)
-    application.add_handler(MessageHandler(filters.ChatType.CHANNELS, forward_message))
+    # चैनल पोस्ट हैंडलर जोड़ें (यहाँ सही फिल्टर का उपयोग)
+    application.add_handler(MessageHandler(filters.ChatType.CHANNEL, forward_message))
     
     # बॉट स्टार्ट करें
     application.run_polling()
