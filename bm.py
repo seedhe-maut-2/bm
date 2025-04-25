@@ -401,9 +401,13 @@ async def handle_thread_selection(update: Update, context: ContextTypes.DEFAULT_
         query = update.callback_query
         await query.answer()
         
-        data = query.data.split('_')
-        threads = int(data[1])
-        phone_number = data[2]
+        # Split only on first two underscores to preserve phone number
+        parts = query.data.split('_', 2)
+        if len(parts) != 3:
+            raise ValueError("Invalid callback data format")
+            
+        threads = int(parts[1])
+        phone_number = parts[2]
         
         start_bomber(phone_number, threads)
         
@@ -417,7 +421,7 @@ async def handle_thread_selection(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logging.error(f"Thread selection error: {e}")
         try:
-            await query.answer("Error starting bomber", show_alert=True)
+            await query.answer("Error starting bomber. Please try again.", show_alert=True)
         except:
             pass
 
@@ -451,8 +455,8 @@ async def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stopbomber", stop_bomber_command))
-    app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
-    app.add_handler(CallbackQueryHandler(start_bomber_handler, pattern="start_bomber"))
+    app.add_handler(CallbackQueryHandler(check_join, pattern="^check_join$"))
+    app.add_handler(CallbackQueryHandler(start_bomber_handler, pattern="^start_bomber$"))
     app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^threads_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
