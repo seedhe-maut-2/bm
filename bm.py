@@ -1,90 +1,50 @@
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import logging
-import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+import telegram
 
-# Logging setup
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Replace with your bot token
+BOT_TOKEN = "7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg"
+CHANNEL_ID = -1002512368825  # Your channel ID
 
-# Configuration
-TOKEN = "8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A"
-SOURCE_CHANNEL = -1002689206991  # Source channel ID
-DESTINATION_CHANNEL = -1002569303552  # Destination channel ID
-FORWARD_OLD_POSTS = True  # Set to False if you don't want to forward old posts
-MAX_OLD_MESSAGES = 1000  # Maximum number of old messages to forward
-DELAY_BETWEEN_FORWARDS = 1  # Delay in seconds between forwarding messages
+def start(update: Update, context: CallbackContext):
+    keyboard = [
+        [InlineKeyboardButton("Join Channel", url="https://t.me/+RhlQLyOfQ48xMjI1")],
+        [InlineKeyboardButton("Check Join", callback_data="check_join")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    chat_id = update.effective_chat.id
 
-async def forward_single_message(context, message_id):
-    try:
-        await context.bot.forward_message(
-            chat_id=DESTINATION_CHANNEL,
-            from_chat_id=SOURCE_CHANNEL,
-            message_id=message_id
-        )
-        logger.info(f"Forwarded message {message_id}")
-        await asyncio.sleep(DELAY_BETWEEN_FORWARDS)  # Add delay to avoid rate limits
-    except Exception as e:
-        logger.error(f"Error forwarding message {message_id}: {e}")
-
-async def forward_all_existing_posts(application):
-    if not FORWARD_OLD_POSTS:
-        return
-        
-    logger.info("Starting to forward old posts...")
-    try:
-        # Get all available messages
-        messages = []
-        async for message in application.bot.get_chat_history(
-            chat_id=SOURCE_CHANNEL,
-            limit=MAX_OLD_MESSAGES
-        ):
-            messages.append(message)
-        
-        # Forward messages in reverse order (oldest first)
-        for message in reversed(messages):
-            await forward_single_message(application, message.message_id)
-            
-    except Exception as e:
-        logger.error(f"Error in forwarding old posts: {e}")
-
-async def handle_new_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.channel_post and update.channel_post.chat.id == SOURCE_CHANNEL:
-        await forward_single_message(context, update.channel_post.message_id)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="Bot is running! New posts will be forwarded automatically."
+    # Send text message (no photo)
+    context.bot.send_message(
+        chat_id=chat_id,
+        text="Welcome! Please join the channel to continue.",
+        reply_markup=reply_markup
     )
 
+def check_join(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    try:
+        member = context.bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            query.answer("You have joined the channel!")
+            query.edit_message_text("✅ You have joined the channel.")
+        else:
+            query.answer("You haven't joined yet!")
+            query.edit_message_text("❌ You haven't joined the channel yet.")
+    except telegram.error.TelegramError:
+        query.answer("Error checking join status.")
+
 def main():
-    # Create application
-    application = Application.builder().token(TOKEN).build()
-    
-    # Add handlers
-    application.add_handler(MessageHandler(
-        filters.ChatType.CHANNEL & filters.Chat(SOURCE_CHANNEL), 
-        handle_new_post
-    ))
-    application.add_handler(CommandHandler("start", start))
-    
-    # Forward old posts on startup
-    application.add_handler(CommandHandler(
-        "forward_old", 
-        lambda u,c: forward_all_existing_posts(c.application)
-    ))
-    
-    # Run the bot
-    application.run_polling()
-    logger.info("Bot started and listening for channel posts...")
-    
-    # Auto-forward old posts when bot starts
-    if FORWARD_OLD_POSTS:
-        application.create_task(forward_all_existing_posts(application))
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
+
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
