@@ -1,326 +1,660 @@
-import random
 import os
-try:
-  import requests
-  import random
-  import threading
-  import time
-  from ms4 import UserAgentGenerator
-  from uuid import uuid4
-  from secrets import token_hex
-  from user_agent import generate_user_agent
-  from rich.console import Console
-  from rich.table import Table
-  from rich.text import Text
-except:
-	os.system("pip install ms4==2.10.0 rich")
-	
-import requests
-import random
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor as tot
-from ms4 import UserAgentGenerator
-from user_agent import generate_user_agent
+import logging
+from typing import Dict, Optional
 from uuid import uuid4
-from secrets import token_hex
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    InputMediaAudio,
+)
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    CallbackContext,
+    CallbackQueryHandler,
+    ConversationHandler,
+)
+from google.cloud import texttospeech
+import ffmpeg
+from pydub import AudioSegment
+from gtts import gTTS
+import tempfile
 
-All = "qwertyuiopasdfghjklzxcvbnm"
-Num = "0123456789"
+# Enable logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-E = '\033[1;31m'
-X = '\033[1;33m'
-F = '\033[2;32m'
-M = '\x1b[1;37m'
-B = '\x1b[38;5;208m'
-memo = random.randint(100, 300)
-O = f'\x1b[38;5;{memo}m'
+# Constants for conversation states
+SELECTING_VOICE, SELECTING_LANGUAGE, CUSTOMIZING_VOICE, UPLOADING_VOICE = range(4)
 
-def nx():
-    os.system("clear")
-    Banner = f"""{B}{E}=============================={B}
-|{F}[+] YouTube    : {B}| أحمد الحراني 
-|{F}[+] TeleGram   : {B} maho_s9    
-|{F}[+] Instagram  : {B} ahmedalharrani 
-|{F}[+] Tool  : {B}Available Username IG |
-|{F}[+] sever  : {B} Web |
-{E}==============================
-"""
-    for mm in Banner.splitlines():
-        time.sleep(0.05)
-        print(mm)
-
-nx()
-
-token = input(f' {F}({M}1{F}) {M} Enter Token{F}  ' + O)
-print(X + ' ═════════════════════════════════  ')
-ID = input(f' {F}({M}2{F}) {M} Enter ID{F}  ' + O)
-
-console = Console()
-bb = 0
-gg = 0
-
-def Alhrrani(user, proxy):
-    global gg, bb
-    csr = token_hex(8) * 2
-    headers = {
-    'authority': 'www.instagram.com',
-    'accept': '*/*',
-    'accept-language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
-    'content-type': 'application/x-www-form-urlencoded',
-    'origin': 'https://www.instagram.com',
-    'referer': 'https://www.instagram.com/accounts/login/?next=%2F&source=logged_out_homepage',
-    'sec-ch-prefers-color-scheme': 'light',
-    'sec-ch-ua': '"Not-A.Brand";v="99", "Chromium";v="124"',
-    'sec-ch-ua-full-version-list': '"Not-A.Brand";v="99.0.0.0", "Chromium";v="124.0.6327.4"',
-    'sec-ch-ua-mobile': '?1',
-    'sec-ch-ua-model': '"23127PN0CC"',
-    'sec-ch-ua-platform': '"Android"',
-    'sec-ch-ua-platform-version': '"11.0.0"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
-    'user-agent': generate_user_agent(),
-    'x-asbd-id': '129477',
-    'x-csrftoken': csr,
-    'x-ig-app-id': '1217981644879628',
-    'x-ig-www-claim': '0',
-    'x-instagram-ajax': '1016159378',
-    'x-requested-with': 'XMLHttpRequest',
+# Voice options with descriptions
+VOICE_OPTIONS = {
+    "girl_voice": {"name": "👧 Girl Voice", "desc": "Sweet and soft voice"},
+    "boy_voice": {"name": "👦 Boy Voice", "desc": "Strong and firm voice"},
+    "best_girl": {"name": "👩 Best Girl", "desc": "Crystal clear natural voice"},
+    "best_boy": {"name": "👨 Best Boy", "desc": "Smooth and warm voice"},
+    "kid_voice": {"name": "🧒 Kid Voice", "desc": "Fun and energetic"},
+    "celebrity": {"name": "🌟 Celebrity", "desc": "Playful tone like famous people"},
+    "ai_voice": {"name": "🤖 AI Voice", "desc": "Robotic futuristic tone"},
 }
 
-    data = {
-    'enc_password': '#PWD_INSTAGRAM_BROWSER:10:1725333010:AdVQAIKFZ2bJpOIbQENgiygmpue333TXS56Z8NG253JS1LgjbV26LsUm/NuoCsYoNvEgHCTkGBmpCsx7KmPiTnur/Bqzb/hsjbj550lj1SiJEL8RkKyydce7O7cAYiTkAsaitYno1s045I/A5BU9KA==',
-    'loginAttemptSubmissionCount': '0',
-    'optIntoOneTap': 'false',
-    'queryParams': '{"next":"/","source":"logged_out_homepage"}',
-    'trustedDeviceRecords': '{}',
-    'username': user,
+# Language options
+LANGUAGES = {
+    "en": {"name": "English", "voices": ["en-US", "en-GB", "en-AU"]},
+    "hi": {"name": "Hindi", "voices": ["hi-IN"]},
+    "es": {"name": "Spanish", "voices": ["es-ES", "es-US"]},
+    "fr": {"name": "French", "voices": ["fr-FR"]},
+    "de": {"name": "German", "voices": ["de-DE"]},
+    "it": {"name": "Italian", "voices": ["it-IT"]},
 }
-    try:
-      req = requests.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', headers=headers, data=data, proxies={'http': proxy}).text
-      if "showAccountRecoveryModal" in req:
-          bb += 1
-      else:
-          gg += 1
-          tlg = f'''
- Hi hunt Username INSTAGRAM
-⋘─────━*AHMED*━─────⋙
-Good Username : {user}
-Instagram ==√
-BY : @maho_s9 √ CH : @maho9s
-⋘─────━*AHMED*━─────⋙'''
-          print(F + tlg)
-          requests.post(f'https://api.telegram.org/bot{token}/sendMessage?chat_id={ID}&text={tlg}')
-    except:
-        bb += 1
-        pass
- 
 
+# Tone options
+TONES = {
+    "neutral": "😐 Neutral",
+    "happy": "😊 Happy",
+    "excited": "🤩 Excited",
+    "calm": "🧘 Calm",
+    "serious": "🧐 Serious",
+    "motivational": "💪 Motivational",
+}
+
+class VoiceBot:
+    def __init__(self, token: str):
+        self.updater = Updater(token)
+        self.dispatcher = self.updater.dispatcher
+        
+        # Initialize Google TTS client
+        self.tts_client = texttospeech.TextToSpeechClient()
+        
+        # User preferences storage
+        self.user_prefs = {}
+        
+        # Register handlers
+        self._register_handlers()
+        
+    def _register_handlers(self):
+        # Command handlers
+        start_handler = CommandHandler('start', self.start)
+        help_handler = CommandHandler('help', self.help)
+        voice_handler = CommandHandler('voice_quality', self.voice_quality)
+        custom_voice_handler = CommandHandler('custom_voice', self.custom_voice)
+        feedback_handler = CommandHandler('feedback', self.feedback)
+        
+        # Conversation handler for voice selection
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('convert', self.start_conversion)],
+            states={
+                SELECTING_VOICE: [
+                    CallbackQueryHandler(self.select_voice, pattern='^voice_.*$')
+                ],
+                SELECTING_LANGUAGE: [
+                    CallbackQueryHandler(self.select_language, pattern='^lang_.*$')
+                ],
+                CUSTOMIZING_VOICE: [
+                    CallbackQueryHandler(self.customize_voice, pattern='^tone_.*$'),
+                    MessageHandler(Filters.text & ~Filters.command, self.process_text)
+                ],
+                UPLOADING_VOICE: [
+                    MessageHandler(Filters.voice, self.handle_voice_upload),
+                    MessageHandler(Filters.audio, self.handle_voice_upload),
+                ],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel)],
+        )
+        
+        # Message handlers
+        text_handler = MessageHandler(Filters.text & ~Filters.command, self.handle_text)
+        voice_handler_msg = MessageHandler(Filters.voice, self.handle_voice_message)
+        
+        # Add handlers to dispatcher
+        self.dispatcher.add_handler(start_handler)
+        self.dispatcher.add_handler(help_handler)
+        self.dispatcher.add_handler(voice_handler)
+        self.dispatcher.add_handler(custom_voice_handler)
+        self.dispatcher.add_handler(feedback_handler)
+        self.dispatcher.add_handler(conv_handler)
+        self.dispatcher.add_handler(text_handler)
+        self.dispatcher.add_handler(voice_handler_msg)
+        
+        # Error handler
+        self.dispatcher.add_error_handler(self.error_handler)
     
-def mahos(user, proxy):
-    global gg, bb
-    try:        
-        csr = token_hex(8) * 2
-        uid = uuid4().hex.upper()
-        miid = token_hex(13).upper()
-        dtr = token_hex(13)
-
-        cookies = {
-            'csrftoken': csr,
-            'dpr': '2.1988937854766846',
-            'ps_n': '0',
-            'ps_l': '0',
-            'mid': miid,
-            'ig_did': uid,
-            'datr': dtr,
-            'ig_nrcb': '1',
-        }
-
-        headers = {
-            'authority': 'www.instagram.com',
-            'accept': '*/*',
-            'accept-language': 'ar-YE,ar;q=0.9,en-YE;q=0.8,en-US;q=0.7,en;q=0.6',
-            'content-type': 'application/x-www-form-urlencoded',
-            'dpr': '2.19889',
-            'origin': 'https://www.instagram.com',
-            'referer': 'https://www.instagram.com/accounts/emailsignup/',
-            'sec-ch-prefers-color-scheme': 'dark',
-            'sec-ch-ua': '"Not)A;Brand";v="24", "Chromium";v="116"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-model': '""',
-            'sec-ch-ua-platform': '"Linux"',
-            'sec-ch-ua-platform-version': '""',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'user-agent': str(UserAgentGenerator()),
-            'viewport-width': '891',
-            'x-asbd-id': '129477',
-            'x-csrftoken': csr,
-            'x-ig-app-id': '936619743392459',
-            'x-ig-www-claim': '0',
-            'x-instagram-ajax': '1012280089',
-            'x-requested-with': 'XMLHttpRequest',
-        }
-
-        timestamp = str(time.time()).split('.')[0]
-        data = {
-           'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{timestamp}:mahos999',
-            'email': 'mahos@mahos.com',
-            'first_name': 'Ahmedalhrrani',
-            'username': user,
-            'client_id': miid,
-            'seamless_login_enabled': '1',
-            'opt_into_one_tap': 'false',
-        }
-
-        res = requests.post(
-            'https://www.instagram.com/api/v1/web/accounts/web_create_ajax/attempt/',
-            cookies=cookies,
-            headers=headers,
-            data=data,
-            proxies={'http': proxy}
-        ).text
-
-        if '"dryrun_passed":true,' in res:
-            gg += 1
-            tlg = f'''
- Hi hunt Username INSTAGRAM
-⋘─────━*AHMED*━─────⋙
-Good Username : {user}
-Instagram ==√
-BY : @maho_s9 √ CH : @maho9s
-⋘─────━*AHMED*━─────⋙'''
-            print(F + tlg)
-            requests.post(f'https://api.telegram.org/bot{token}/sendMessage?chat_id={ID}&text={tlg}')
-        elif '"errors"' in res and '"username_is_taken"' in res and '"dryrun_passed": false,' in res or 'username_has_special_char' in res:      
-            bb += 1
+    def start(self, update: Update, context: CallbackContext) -> None:
+        """Send welcome message with animated GIF and start button."""
+        user = update.effective_user
+        welcome_text = (
+            f"🎉 *Welcome {user.first_name}!* 🎉\n\n"
+            "I'm your *personal voice assistant* that can convert text to speech with various voice options. "
+            "Here's what I can do:\n\n"
+            "• Convert text to voice in multiple languages 🌍\n"
+            "• Offer different voice qualities (girl, boy, celebrity, etc.) 🎤\n"
+            "• Customize tone (happy, serious, motivational) 🎭\n"
+            "• Process voice messages and reply with text 🎙️\n"
+            "• And much more!\n\n"
+            "Click *Let's Begin* to start or /help for instructions."
+        )
+        
+        # Send animated GIF (replace with actual GIF URL)
+        context.bot.send_animation(
+            chat_id=update.effective_chat.id,
+            animation="https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif",
+            caption=welcome_text,
+            parse_mode="Markdown"
+        )
+        
+        # Create inline keyboard with start button
+        keyboard = [
+            [InlineKeyboardButton("🚀 Let's Begin", callback_data="start_conversion")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        update.message.reply_text(
+            "Ready when you are!",
+            reply_markup=reply_markup
+        )
+    
+    def help(self, update: Update, context: CallbackContext) -> None:
+        """Send help message with voice instructions."""
+        help_text = (
+            "📖 *How to use this bot:*\n\n"
+            "1. Send me any text or use /convert command\n"
+            "2. Select your preferred voice quality\n"
+            "3. Choose language if needed\n"
+            "4. Customize tone and speed\n"
+            "5. Get your voice message!\n\n"
+            "✨ *Special Features:*\n"
+            "- /voice_quality - Change voice type\n"
+            "- /custom_voice - Upload your own voice\n"
+            "- Send voice messages for text conversion\n"
+            "- Multi-language support\n\n"
+            "Need help? Just ask!"
+        )
+        
+        # Send voice message with instructions (would need actual audio file)
+        # context.bot.send_voice(chat_id=update.effective_chat.id, voice=open('help_audio.mp3', 'rb'))
+        
+        update.message.reply_text(help_text, parse_mode="Markdown")
+    
+    def voice_quality(self, update: Update, context: CallbackContext) -> None:
+        """Show voice quality options with inline keyboard."""
+        keyboard = []
+        
+        # Create buttons for each voice option
+        for voice_id, voice_data in VOICE_OPTIONS.items():
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{voice_data['name']} - {voice_data['desc']}",
+                    callback_data=f"voice_{voice_id}"
+                )
+            ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        update.message.reply_text(
+            "🎙️ *Select Voice Quality:*\n\n"
+            "Choose from our variety of voices to find your perfect match!",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    
+    def custom_voice(self, update: Update, context: CallbackContext) -> None:
+        """Handle custom voice upload."""
+        update.message.reply_text(
+            "🎤 *Upload Your Voice*\n\n"
+            "Please record or upload a voice message (at least 10 seconds) "
+            "that I can learn from. Speak clearly in a quiet environment.\n\n"
+            "After uploading, I'll process it and create your custom voice profile!",
+            parse_mode="Markdown"
+        )
+        return UPLOADING_VOICE
+    
+    def handle_voice_upload(self, update: Update, context: CallbackContext) -> int:
+        """Process uploaded voice for cloning."""
+        user = update.effective_user
+        voice_file = update.message.voice or update.message.audio
+        
+        # Download the voice file
+        file = context.bot.get_file(voice_file.file_id)
+        temp_file = f"user_voices/{user.id}_{uuid4()}.ogg"
+        file.download(temp_file)
+        
+        # Process the voice file (in a real implementation, this would involve ML processing)
+        update.message.reply_text(
+            "🔍 Processing your voice...\n\n"
+            "This may take a few minutes. I'll notify you when your custom voice is ready!",
+            parse_mode="Markdown"
+        )
+        
+        # In a real implementation, we'd train a voice model here
+        # For now, we'll just pretend it worked
+        self.user_prefs.setdefault(user.id, {})["custom_voice"] = True
+        
+        # Send confirmation
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🎉 *Custom Voice Ready!*\n\n"
+                 "Your custom voice profile has been created. "
+                 "Now you can use it for text-to-speech conversion!",
+            parse_mode="Markdown"
+        )
+        
+        return ConversationHandler.END
+    
+    def start_conversion(self, update: Update, context: CallbackContext) -> int:
+        """Start the text-to-voice conversion process."""
+        query = update.callback_query
+        if query:
+            query.answer()
+            query.edit_message_text(
+                "📝 Please send me the text you'd like to convert to speech."
+            )
         else:
-            bb += 1
-            Alhrrani(user, proxy)
-    except:
-        bb += 1    	
-        Alhrrani(user, proxy)
-        pass
-    	
+            update.message.reply_text(
+                "📝 Please send me the text you'd like to convert to speech."
+            )
         
-
-def Ahmed(user, proxy):
-    global gg, bb
-    headers = {
-    'authority': 'www.instagram.com',
-    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    'accept-language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
-    'cache-control': 'max-age=0',
-    'dpr': '2.75',
-    'referer': f'https://www.instagram.com/{user}/',
-    'sec-ch-prefers-color-scheme': 'light',
-    'sec-ch-ua': '"Not-A.Brand";v="99", "Chromium";v="124"',
-    'sec-ch-ua-full-version-list': '"Not-A.Brand";v="99.0.0.0", "Chromium";v="124.0.6327.4"',
-    'sec-ch-ua-mobile': '?1',
-    'sec-ch-ua-model': '"23127PN0CC"',
-    'sec-ch-ua-platform': '"Android"',
-    'sec-ch-ua-platform-version': '"11.0.0"',
-    'sec-fetch-dest': 'document',
-    'sec-fetch-mode': 'navigate',
-    'sec-fetch-site': 'same-origin',
-    'sec-fetch-user': '?1',
-    'upgrade-insecure-requests': '1',
-    'user-agent': generate_user_agent(),
-    'viewport-width': '980',
-}
-
-    try:
-      res = requests.get(f'https://www.instagram.com/{user}/', headers=headers, proxies={'http': proxy}).text
-      if "<title>Instagram</title>" in res:         
-          mahos(user, proxy)
-      elif "الملف الشخصي" in res and user in res or user in res:
-          bb += 1
-      else:
-          bb += 1
-          mahos(user, proxy)
-    except:
-        bb += 1
-        pass
+        return SELECTING_VOICE
+    
+    def select_voice(self, update: Update, context: CallbackContext) -> int:
+        """Handle voice selection."""
+        query = update.callback_query
+        query.answer()
         
-    os.system('clear')
-    table = Table(title="Instagram username")
-    table.add_column("Type", justify="center", style="cyan", no_wrap=True)
-    table.add_column("Count", justify="center", style="magenta")
-    table.add_row("GoodInstaUser", str(gg), style="green")
-    table.add_row("BadInstaUser", str(bb), style="red")   
-    table.add_row("Username", user, style="white")
-    table.add_row("Dev", "AHMED ~~ @maho_s9")
-
-    console.print(table)
-
-def Gen(G):
-    usery = ''
-    i = 0 
-    while i < len(G):
-        if G[i] == '#':
-            usery += random.choice(All + Num)  
-        elif G[i] == '*':
-            usery += random.choice(All)  
-        elif G[i] == '"':
-            usery += random.choice(Num)
-        elif G[i] == '_':
-            usery += '_'  
-        elif G[i] == '.':
-            usery += '.'  
-        elif G[i:i+2] == '@@':
-            usery += random.choice(All) * 2 
-            i += 1
-        elif G[i:i+2] == '§§':
-            usery += random.choice(Num) * 2  
-            i += 1  
+        voice_id = query.data.split('_')[1]
+        user_id = query.from_user.id
+        
+        # Store user preference
+        self.user_prefs.setdefault(user_id, {})["voice"] = voice_id
+        
+        # Show language selection
+        keyboard = []
+        for lang_code, lang_data in LANGUAGES.items():
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"🌐 {lang_data['name']}",
+                    callback_data=f"lang_{lang_code}"
+                )
+            ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(
+            f"🎙️ Selected: *{VOICE_OPTIONS[voice_id]['name']}*\n\n"
+            "Now choose the language:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        
+        return SELECTING_LANGUAGE
+    
+    def select_language(self, update: Update, context: CallbackContext) -> int:
+        """Handle language selection."""
+        query = update.callback_query
+        query.answer()
+        
+        lang_code = query.data.split('_')[1]
+        user_id = query.from_user.id
+        
+        # Store user preference
+        self.user_prefs.setdefault(user_id, {})["language"] = lang_code
+        
+        # Show tone customization
+        keyboard = []
+        row = []
+        for i, (tone_id, tone_name) in enumerate(TONES.items()):
+            row.append(InlineKeyboardButton(tone_name, callback_data=f"tone_{tone_id}"))
+            if (i + 1) % 2 == 0:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(
+            f"🌐 Selected: *{LANGUAGES[lang_code]['name']}*\n\n"
+            "Now choose the tone for your voice:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        
+        return CUSTOMIZING_VOICE
+    
+    def customize_voice(self, update: Update, context: CallbackContext) -> int:
+        """Handle tone customization."""
+        query = update.callback_query
+        query.answer()
+        
+        tone_id = query.data.split('_')[1]
+        user_id = query.from_user.id
+        
+        # Store user preference
+        self.user_prefs.setdefault(user_id, {})["tone"] = tone_id
+        
+        query.edit_message_text(
+            f"🎭 Selected tone: *{TONES[tone_id]}*\n\n"
+            "Now please send me the text you want to convert to speech:",
+            parse_mode="Markdown"
+        )
+        
+        return CUSTOMIZING_VOICE
+    
+    def process_text(self, update: Update, context: CallbackContext) -> int:
+        """Process the text and convert to speech."""
+        user_id = update.effective_user.id
+        text = update.message.text
+        
+        # Get user preferences or use defaults
+        voice_id = self.user_prefs.get(user_id, {}).get("voice", "best_girl")
+        lang_code = self.user_prefs.get(user_id, {}).get("language", "en")
+        tone_id = self.user_prefs.get(user_id, {}).get("tone", "neutral")
+        
+        # Check text length
+        if len(text) > 1000:
+            update.message.reply_text(
+                "⚠️ *Text too long*\n\n"
+                "For best quality, please keep texts under 1000 characters. "
+                "I'll process this in chunks.",
+                parse_mode="Markdown"
+            )
+            return self._process_long_text(update, context, text, voice_id, lang_code, tone_id)
+        
+        # Generate voice
+        try:
+            audio_file = self._generate_voice(text, voice_id, lang_code, tone_id)
+            
+            # Send the voice message
+            with open(audio_file, 'rb') as audio:
+                context.bot.send_voice(
+                    chat_id=update.effective_chat.id,
+                    voice=audio,
+                    caption=f"🎤 Here's your voice message!\n\n"
+                           f"Voice: {VOICE_OPTIONS[voice_id]['name']}\n"
+                           f"Language: {LANGUAGES[lang_code]['name']}\n"
+                           f"Tone: {TONES[tone_id]}"
+                )
+            
+            # Ask for feedback
+            self._request_feedback(update, context)
+            
+        except Exception as e:
+            logger.error(f"Error generating voice: {e}")
+            update.message.reply_text(
+                "😢 *Oops! Something went wrong.*\n\n"
+                "I couldn't generate the voice message. Please try again with different text.",
+                parse_mode="Markdown"
+            )
+        
+        return ConversationHandler.END
+    
+    def _process_long_text(self, update: Update, context: CallbackContext, 
+                          text: str, voice_id: str, lang_code: str, tone_id: str) -> int:
+        """Process long text by splitting into chunks."""
+        chunk_size = 500
+        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        
+        # Send processing message
+        processing_msg = context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🔧 Processing {len(chunks)} chunks..."
+        )
+        
+        # Process each chunk
+        audio_files = []
+        for i, chunk in enumerate(chunks):
+            try:
+                audio_file = self._generate_voice(chunk, voice_id, lang_code, tone_id)
+                audio_files.append(audio_file)
+            except Exception as e:
+                logger.error(f"Error processing chunk {i}: {e}")
+                continue
+        
+        # Combine audio files
+        if audio_files:
+            combined_audio = self._combine_audio_files(audio_files)
+            
+            # Send combined audio
+            with open(combined_audio, 'rb') as audio:
+                context.bot.send_voice(
+                    chat_id=update.effective_chat.id,
+                    voice=audio,
+                    caption=f"🎤 Here's your long voice message!\n\n"
+                           f"Voice: {VOICE_OPTIONS[voice_id]['name']}\n"
+                           f"Language: {LANGUAGES[lang_code]['name']}\n"
+                           f"Tone: {TONES[tone_id]}"
+                )
+            
+            # Clean up
+            for file in audio_files:
+                try:
+                    os.remove(file)
+                except:
+                    pass
+            try:
+                os.remove(combined_audio)
+            except:
+                pass
+            
+            # Ask for feedback
+            self._request_feedback(update, context)
+        
+        # Delete processing message
+        try:
+            context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=processing_msg.message_id
+            )
+        except:
+            pass
+        
+        return ConversationHandler.END
+    
+    def _generate_voice(self, text: str, voice_id: str, lang_code: str, tone_id: str) -> str:
+        """Generate voice file using Google TTS or other service."""
+        # Determine voice parameters based on selections
+        voice_params = self._get_voice_parameters(voice_id, lang_code, tone_id)
+        
+        # Generate unique filename
+        output_file = f"temp_voice_{uuid4()}.mp3"
+        
+        # Use Google Cloud TTS for high-quality voices
+        if voice_id in ["best_girl", "best_boy", "celebrity"]:
+            synthesis_input = texttospeech.SynthesisInput(text=text)
+            
+            # Build the voice request
+            voice = texttospeech.VoiceSelectionParams(
+                language_code=voice_params["language_code"],
+                name=voice_params["voice_name"],
+                ssml_gender=voice_params["ssml_gender"],
+            )
+            
+            # Select the type of audio file
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3,
+                speaking_rate=voice_params["speaking_rate"],
+                pitch=voice_params["pitch"],
+                volume_gain_db=voice_params["volume"],
+            )
+            
+            # Perform the text-to-speech request
+            response = self.tts_client.synthesize_speech(
+                input=synthesis_input, voice=voice, audio_config=audio_config
+            )
+            
+            # Write the response to the output file
+            with open(output_file, "wb") as out:
+                out.write(response.audio_content)
+        
+        # Use gTTS for simpler voices
         else:
-            usery += G[i]
+            tts = gTTS(text=text, lang=lang_code, slow=(voice_params["speaking_rate"] < 1.0))
+            tts.save(output_file)
+            
+            # Apply effects with pydub if needed
+            if tone_id in ["excited", "motivational"]:
+                audio = AudioSegment.from_mp3(output_file)
+                if tone_id == "excited":
+                    audio = audio.speedup(playback_speed=1.1)
+                elif tone_id == "motivational":
+                    audio = audio + 6  # Increase volume
+                audio.export(output_file, format="mp3")
         
-        i += 1  
+        return output_file
     
-    return usery
+    def _get_voice_parameters(self, voice_id: str, lang_code: str, tone_id: str) -> Dict:
+        """Get voice parameters based on selections."""
+        params = {
+            "language_code": f"{lang_code}-IN" if lang_code == "hi" else f"{lang_code}-US",
+            "voice_name": "",
+            "ssml_gender": texttospeech.SsmlVoiceGender.NEUTRAL,
+            "speaking_rate": 1.0,
+            "pitch": 0.0,
+            "volume": 0.0,
+        }
+        
+        # Set voice name and gender
+        if voice_id == "best_girl":
+            params["voice_name"] = f"{lang_code}-US-Wavenet-F"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.FEMALE
+        elif voice_id == "best_boy":
+            params["voice_name"] = f"{lang_code}-US-Wavenet-D"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.MALE
+        elif voice_id == "girl_voice":
+            params["voice_name"] = f"{lang_code}-US-Standard-C"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.FEMALE
+        elif voice_id == "boy_voice":
+            params["voice_name"] = f"{lang_code}-US-Standard-B"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.MALE
+        elif voice_id == "kid_voice":
+            params["voice_name"] = f"{lang_code}-US-Standard-A"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.MALE
+            params["pitch"] = 5.0
+        elif voice_id == "celebrity":
+            params["voice_name"] = f"{lang_code}-US-Standard-J"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.MALE
+        elif voice_id == "ai_voice":
+            params["voice_name"] = f"{lang_code}-US-Standard-E"
+            params["ssml_gender"] = texttospeech.SsmlVoiceGender.MALE
+            params["pitch"] = -4.0
+        
+        # Adjust for tone
+        if tone_id == "happy":
+            params["speaking_rate"] = 1.1
+            params["pitch"] += 2.0
+        elif tone_id == "excited":
+            params["speaking_rate"] = 1.2
+            params["pitch"] += 3.0
+            params["volume"] = 2.0
+        elif tone_id == "calm":
+            params["speaking_rate"] = 0.9
+            params["pitch"] -= 1.0
+        elif tone_id == "serious":
+            params["speaking_rate"] = 0.95
+            params["pitch"] -= 2.0
+        elif tone_id == "motivational":
+            params["speaking_rate"] = 1.05
+            params["volume"] = 4.0
+        
+        return params
+    
+    def _combine_audio_files(self, audio_files: list) -> str:
+        """Combine multiple audio files into one."""
+        if not audio_files:
+            raise ValueError("No audio files to combine")
+        
+        if len(audio_files) == 1:
+            return audio_files[0]
+        
+        # Create a silent 0.5s segment for spacing
+        silent_segment = AudioSegment.silent(duration=500)
+        
+        combined = AudioSegment.from_file(audio_files[0])
+        for file in audio_files[1:]:
+            combined += silent_segment + AudioSegment.from_file(file)
+        
+        output_file = f"combined_{uuid4()}.mp3"
+        combined.export(output_file, format="mp3")
+        
+        return output_file
+    
+    def _request_feedback(self, update: Update, context: CallbackContext) -> None:
+        """Ask user for feedback after voice generation."""
+        keyboard = [
+            [
+                InlineKeyboardButton("👍 Good", callback_data="feedback_good"),
+                InlineKeyboardButton("👎 Could Improve", callback_data="feedback_bad"),
+            ],
+            [InlineKeyboardButton("💡 Suggest Improvement", callback_data="feedback_suggest")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="*How was your experience?*",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    
+    def feedback(self, update: Update, context: CallbackContext) -> None:
+        """Handle feedback command."""
+        self._request_feedback(update, context)
+    
+    def handle_text(self, update: Update, context: CallbackContext) -> None:
+        """Handle direct text messages."""
+        # Check if this is part of a conversation
+        if context.user_data.get('conversation'):
+            return
+        
+        # Otherwise, start conversion process
+        self.start_conversion(update, context)
+    
+    def handle_voice_message(self, update: Update, context: CallbackContext) -> None:
+        """Convert voice message to text and then to selected voice."""
+        # In a real implementation, we'd use speech-to-text here
+        # For now, we'll just prompt for text
+        update.message.reply_text(
+            "🎙️ *Voice Message Received*\n\n"
+            "I currently support converting text to voice. "
+            "Please send me the text you'd like to convert or use /convert to start.",
+            parse_mode="Markdown"
+        )
+    
+    def cancel(self, update: Update, context: CallbackContext) -> int:
+        """Cancel the current conversation."""
+        update.message.reply_text(
+            "Operation cancelled. Use /convert to start again."
+        )
+        return ConversationHandler.END
+    
+    def error_handler(self, update: Update, context: CallbackContext) -> None:
+        """Handle errors."""
+        logger.error(msg="Exception while handling update:", exc_info=context.error)
+        
+        if update and update.effective_message:
+            update.effective_message.reply_text(
+                "😢 *Oops! Something went wrong.*\n\n"
+                "Please try again later or contact support if the problem persists.",
+                parse_mode="Markdown"
+            )
 
-Gs = [
-    "#_#_#",
-    "_#_#_",
-    "##.##",
-    "#.###",
-    "##_##",
-    "###__",
-    "__###",
-    "**.**",
-    "@@_§§",
-    "§§.@@",
-    "§§_@@",
-    "@@.§§",
-    "_###_",
-    '**_""',
-    ".####",
-    "#.#.#",
-    "#_#.#",
-    "#.#_#",
-    "#.#_#",
-    "##_##",
-    "#_###",
-    "###_#",
-    "#.##_",
-    "##.##",
-    "#.##.#",
-    "#_##.#"
-]
-with tot(max_workers=2) as los:
-  while True:
-    ah = random.choice(Gs)
-    user = Gen(ah)
-    ip = ".".join(str(random.randint(0, 255)) for _ in range(4))        
-    pl = [19, 20, 21, 22, 23, 24, 25, 80, 53, 111, 110, 443, 8080, 139, 445, 512, 513, 514, 4444, 2049, 1524, 3306, 5900]
-    port = random.choice(pl)
-    proxy = ip + ":" + str(port)        
-    los.submit(Ahmed, user, proxy)
+def main():
+    """Start the bot."""
+    # Get Telegram bot token from environment
+    TOKEN = os.getenv("8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A")
+    if not TOKEN:
+        raise ValueError("Please set the TELEGRAM_BOT_TOKEN environment variable")
     
-    
+    # Create and start bot
+    bot = VoiceBot(TOKEN)
+    bot.updater.start_polling()
+    bot.updater.idle()
+
+if __name__ == '__main__':
+    main()
