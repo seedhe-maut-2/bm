@@ -1,33 +1,31 @@
 import os
 import logging
-from typing import Dict, Optional
+from typing import Dict
 from uuid import uuid4
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
     InputMediaAudio,
 )
 from telegram.ext import (
-    Updater,
+    Application,
     CommandHandler,
     MessageHandler,
-    Filters,
     CallbackContext,
     CallbackQueryHandler,
     ConversationHandler,
+    filters
 )
 from google.cloud import texttospeech
-import ffmpeg
 from pydub import AudioSegment
 from gtts import gTTS
 import tempfile
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -67,66 +65,10 @@ TONES = {
 
 class VoiceBot:
     def __init__(self, token: str):
-        self.updater = Updater(token)
-        self.dispatcher = self.updater.dispatcher
-        
-        # Initialize Google TTS client
-        self.tts_client = texttospeech.TextToSpeechClient()
-        
-        # User preferences storage
+        self.token = token
         self.user_prefs = {}
         
-        # Register handlers
-        self._register_handlers()
-        
-    def _register_handlers(self):
-        # Command handlers
-        start_handler = CommandHandler('start', self.start)
-        help_handler = CommandHandler('help', self.help)
-        voice_handler = CommandHandler('voice_quality', self.voice_quality)
-        custom_voice_handler = CommandHandler('custom_voice', self.custom_voice)
-        feedback_handler = CommandHandler('feedback', self.feedback)
-        
-        # Conversation handler for voice selection
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('convert', self.start_conversion)],
-            states={
-                SELECTING_VOICE: [
-                    CallbackQueryHandler(self.select_voice, pattern='^voice_.*$')
-                ],
-                SELECTING_LANGUAGE: [
-                    CallbackQueryHandler(self.select_language, pattern='^lang_.*$')
-                ],
-                CUSTOMIZING_VOICE: [
-                    CallbackQueryHandler(self.customize_voice, pattern='^tone_.*$'),
-                    MessageHandler(Filters.text & ~Filters.command, self.process_text)
-                ],
-                UPLOADING_VOICE: [
-                    MessageHandler(Filters.voice, self.handle_voice_upload),
-                    MessageHandler(Filters.audio, self.handle_voice_upload),
-                ],
-            },
-            fallbacks=[CommandHandler('cancel', self.cancel)],
-        )
-        
-        # Message handlers
-        text_handler = MessageHandler(Filters.text & ~Filters.command, self.handle_text)
-        voice_handler_msg = MessageHandler(Filters.voice, self.handle_voice_message)
-        
-        # Add handlers to dispatcher
-        self.dispatcher.add_handler(start_handler)
-        self.dispatcher.add_handler(help_handler)
-        self.dispatcher.add_handler(voice_handler)
-        self.dispatcher.add_handler(custom_voice_handler)
-        self.dispatcher.add_handler(feedback_handler)
-        self.dispatcher.add_handler(conv_handler)
-        self.dispatcher.add_handler(text_handler)
-        self.dispatcher.add_handler(voice_handler_msg)
-        
-        # Error handler
-        self.dispatcher.add_error_handler(self.error_handler)
-    
-    def start(self, update: Update, context: CallbackContext) -> None:
+    async def start(self, update: Update, context: CallbackContext) -> None:
         """Send welcome message with animated GIF and start button."""
         user = update.effective_user
         welcome_text = (
@@ -141,26 +83,19 @@ class VoiceBot:
             "Click *Let's Begin* to start or /help for instructions."
         )
         
-        # Send animated GIF (replace with actual GIF URL)
-        context.bot.send_animation(
-            chat_id=update.effective_chat.id,
-            animation="https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif",
-            caption=welcome_text,
-            parse_mode="Markdown"
-        )
-        
         # Create inline keyboard with start button
         keyboard = [
             [InlineKeyboardButton("🚀 Let's Begin", callback_data="start_conversion")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        update.message.reply_text(
-            "Ready when you are!",
-            reply_markup=reply_markup
+        await update.message.reply_text(
+            welcome_text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
         )
     
-    def help(self, update: Update, context: CallbackContext) -> None:
+    async def help(self, update: Update, context: CallbackContext) -> None:
         """Send help message with voice instructions."""
         help_text = (
             "📖 *How to use this bot:*\n\n"
@@ -177,12 +112,9 @@ class VoiceBot:
             "Need help? Just ask!"
         )
         
-        # Send voice message with instructions (would need actual audio file)
-        # context.bot.send_voice(chat_id=update.effective_chat.id, voice=open('help_audio.mp3', 'rb'))
-        
-        update.message.reply_text(help_text, parse_mode="Markdown")
+        await update.message.reply_text(help_text, parse_mode="Markdown")
     
-    def voice_quality(self, update: Update, context: CallbackContext) -> None:
+    async def voice_quality(self, update: Update, context: CallbackContext) -> None:
         """Show voice quality options with inline keyboard."""
         keyboard = []
         
@@ -197,16 +129,16 @@ class VoiceBot:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        update.message.reply_text(
+        await update.message.reply_text(
             "🎙️ *Select Voice Quality:*\n\n"
             "Choose from our variety of voices to find your perfect match!",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
     
-    def custom_voice(self, update: Update, context: CallbackContext) -> None:
+    async def custom_voice(self, update: Update, context: CallbackContext) -> int:
         """Handle custom voice upload."""
-        update.message.reply_text(
+        await update.message.reply_text(
             "🎤 *Upload Your Voice*\n\n"
             "Please record or upload a voice message (at least 10 seconds) "
             "that I can learn from. Speak clearly in a quiet environment.\n\n"
@@ -215,29 +147,27 @@ class VoiceBot:
         )
         return UPLOADING_VOICE
     
-    def handle_voice_upload(self, update: Update, context: CallbackContext) -> int:
+    async def handle_voice_upload(self, update: Update, context: CallbackContext) -> int:
         """Process uploaded voice for cloning."""
         user = update.effective_user
         voice_file = update.message.voice or update.message.audio
         
         # Download the voice file
-        file = context.bot.get_file(voice_file.file_id)
+        file = await context.bot.get_file(voice_file.file_id)
         temp_file = f"user_voices/{user.id}_{uuid4()}.ogg"
-        file.download(temp_file)
+        await file.download_to_drive(temp_file)
         
-        # Process the voice file (in a real implementation, this would involve ML processing)
-        update.message.reply_text(
+        # Process the voice file
+        await update.message.reply_text(
             "🔍 Processing your voice...\n\n"
             "This may take a few minutes. I'll notify you when your custom voice is ready!",
             parse_mode="Markdown"
         )
         
-        # In a real implementation, we'd train a voice model here
-        # For now, we'll just pretend it worked
         self.user_prefs.setdefault(user.id, {})["custom_voice"] = True
         
         # Send confirmation
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="🎉 *Custom Voice Ready!*\n\n"
                  "Your custom voice profile has been created. "
@@ -247,25 +177,25 @@ class VoiceBot:
         
         return ConversationHandler.END
     
-    def start_conversion(self, update: Update, context: CallbackContext) -> int:
+    async def start_conversion(self, update: Update, context: CallbackContext) -> int:
         """Start the text-to-voice conversion process."""
         query = update.callback_query
         if query:
-            query.answer()
-            query.edit_message_text(
+            await query.answer()
+            await query.edit_message_text(
                 "📝 Please send me the text you'd like to convert to speech."
             )
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "📝 Please send me the text you'd like to convert to speech."
             )
         
         return SELECTING_VOICE
     
-    def select_voice(self, update: Update, context: CallbackContext) -> int:
+    async def select_voice(self, update: Update, context: CallbackContext) -> int:
         """Handle voice selection."""
         query = update.callback_query
-        query.answer()
+        await query.answer()
         
         voice_id = query.data.split('_')[1]
         user_id = query.from_user.id
@@ -285,7 +215,7 @@ class VoiceBot:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        query.edit_message_text(
+        await query.edit_message_text(
             f"🎙️ Selected: *{VOICE_OPTIONS[voice_id]['name']}*\n\n"
             "Now choose the language:",
             reply_markup=reply_markup,
@@ -294,10 +224,10 @@ class VoiceBot:
         
         return SELECTING_LANGUAGE
     
-    def select_language(self, update: Update, context: CallbackContext) -> int:
+    async def select_language(self, update: Update, context: CallbackContext) -> int:
         """Handle language selection."""
         query = update.callback_query
-        query.answer()
+        await query.answer()
         
         lang_code = query.data.split('_')[1]
         user_id = query.from_user.id
@@ -318,7 +248,7 @@ class VoiceBot:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        query.edit_message_text(
+        await query.edit_message_text(
             f"🌐 Selected: *{LANGUAGES[lang_code]['name']}*\n\n"
             "Now choose the tone for your voice:",
             reply_markup=reply_markup,
@@ -327,10 +257,10 @@ class VoiceBot:
         
         return CUSTOMIZING_VOICE
     
-    def customize_voice(self, update: Update, context: CallbackContext) -> int:
+    async def customize_voice(self, update: Update, context: CallbackContext) -> int:
         """Handle tone customization."""
         query = update.callback_query
-        query.answer()
+        await query.answer()
         
         tone_id = query.data.split('_')[1]
         user_id = query.from_user.id
@@ -338,7 +268,7 @@ class VoiceBot:
         # Store user preference
         self.user_prefs.setdefault(user_id, {})["tone"] = tone_id
         
-        query.edit_message_text(
+        await query.edit_message_text(
             f"🎭 Selected tone: *{TONES[tone_id]}*\n\n"
             "Now please send me the text you want to convert to speech:",
             parse_mode="Markdown"
@@ -346,7 +276,7 @@ class VoiceBot:
         
         return CUSTOMIZING_VOICE
     
-    def process_text(self, update: Update, context: CallbackContext) -> int:
+    async def process_text(self, update: Update, context: CallbackContext) -> int:
         """Process the text and convert to speech."""
         user_id = update.effective_user.id
         text = update.message.text
@@ -358,35 +288,37 @@ class VoiceBot:
         
         # Check text length
         if len(text) > 1000:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "⚠️ *Text too long*\n\n"
                 "For best quality, please keep texts under 1000 characters. "
                 "I'll process this in chunks.",
                 parse_mode="Markdown"
             )
-            return self._process_long_text(update, context, text, voice_id, lang_code, tone_id)
+            return await self._process_long_text(update, context, text, voice_id, lang_code, tone_id)
         
         # Generate voice
         try:
-            audio_file = self._generate_voice(text, voice_id, lang_code, tone_id)
+            audio_file = await self._generate_voice(text, voice_id, lang_code, tone_id)
             
             # Send the voice message
-            with open(audio_file, 'rb') as audio:
-                context.bot.send_voice(
-                    chat_id=update.effective_chat.id,
-                    voice=audio,
-                    caption=f"🎤 Here's your voice message!\n\n"
-                           f"Voice: {VOICE_OPTIONS[voice_id]['name']}\n"
-                           f"Language: {LANGUAGES[lang_code]['name']}\n"
-                           f"Tone: {TONES[tone_id]}"
-                )
+            await context.bot.send_voice(
+                chat_id=update.effective_chat.id,
+                voice=audio_file,
+                caption=f"🎤 Here's your voice message!\n\n"
+                       f"Voice: {VOICE_OPTIONS[voice_id]['name']}\n"
+                       f"Language: {LANGUAGES[lang_code]['name']}\n"
+                       f"Tone: {TONES[tone_id]}"
+            )
+            
+            # Clean up
+            os.remove(audio_file)
             
             # Ask for feedback
-            self._request_feedback(update, context)
+            await self._request_feedback(update, context)
             
         except Exception as e:
             logger.error(f"Error generating voice: {e}")
-            update.message.reply_text(
+            await update.message.reply_text(
                 "😢 *Oops! Something went wrong.*\n\n"
                 "I couldn't generate the voice message. Please try again with different text.",
                 parse_mode="Markdown"
@@ -394,14 +326,14 @@ class VoiceBot:
         
         return ConversationHandler.END
     
-    def _process_long_text(self, update: Update, context: CallbackContext, 
-                          text: str, voice_id: str, lang_code: str, tone_id: str) -> int:
+    async def _process_long_text(self, update: Update, context: CallbackContext, 
+                              text: str, voice_id: str, lang_code: str, tone_id: str) -> int:
         """Process long text by splitting into chunks."""
         chunk_size = 500
         chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
         
         # Send processing message
-        processing_msg = context.bot.send_message(
+        processing_msg = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"🔧 Processing {len(chunks)} chunks..."
         )
@@ -410,7 +342,7 @@ class VoiceBot:
         audio_files = []
         for i, chunk in enumerate(chunks):
             try:
-                audio_file = self._generate_voice(chunk, voice_id, lang_code, tone_id)
+                audio_file = await self._generate_voice(chunk, voice_id, lang_code, tone_id)
                 audio_files.append(audio_file)
             except Exception as e:
                 logger.error(f"Error processing chunk {i}: {e}")
@@ -418,18 +350,17 @@ class VoiceBot:
         
         # Combine audio files
         if audio_files:
-            combined_audio = self._combine_audio_files(audio_files)
+            combined_audio = await self._combine_audio_files(audio_files)
             
             # Send combined audio
-            with open(combined_audio, 'rb') as audio:
-                context.bot.send_voice(
-                    chat_id=update.effective_chat.id,
-                    voice=audio,
-                    caption=f"🎤 Here's your long voice message!\n\n"
-                           f"Voice: {VOICE_OPTIONS[voice_id]['name']}\n"
-                           f"Language: {LANGUAGES[lang_code]['name']}\n"
-                           f"Tone: {TONES[tone_id]}"
-                )
+            await context.bot.send_voice(
+                chat_id=update.effective_chat.id,
+                voice=combined_audio,
+                caption=f"🎤 Here's your long voice message!\n\n"
+                       f"Voice: {VOICE_OPTIONS[voice_id]['name']}\n"
+                       f"Language: {LANGUAGES[lang_code]['name']}\n"
+                       f"Tone: {TONES[tone_id]}"
+            )
             
             # Clean up
             for file in audio_files:
@@ -443,11 +374,11 @@ class VoiceBot:
                 pass
             
             # Ask for feedback
-            self._request_feedback(update, context)
+            await self._request_feedback(update, context)
         
         # Delete processing message
         try:
-            context.bot.delete_message(
+            await context.bot.delete_message(
                 chat_id=update.effective_chat.id,
                 message_id=processing_msg.message_id
             )
@@ -456,7 +387,7 @@ class VoiceBot:
         
         return ConversationHandler.END
     
-    def _generate_voice(self, text: str, voice_id: str, lang_code: str, tone_id: str) -> str:
+    async def _generate_voice(self, text: str, voice_id: str, lang_code: str, tone_id: str) -> str:
         """Generate voice file using Google TTS or other service."""
         # Determine voice parameters based on selections
         voice_params = self._get_voice_parameters(voice_id, lang_code, tone_id)
@@ -564,7 +495,7 @@ class VoiceBot:
         
         return params
     
-    def _combine_audio_files(self, audio_files: list) -> str:
+    async def _combine_audio_files(self, audio_files: list) -> str:
         """Combine multiple audio files into one."""
         if not audio_files:
             raise ValueError("No audio files to combine")
@@ -584,7 +515,7 @@ class VoiceBot:
         
         return output_file
     
-    def _request_feedback(self, update: Update, context: CallbackContext) -> None:
+    async def _request_feedback(self, update: Update, context: CallbackContext) -> None:
         """Ask user for feedback after voice generation."""
         keyboard = [
             [
@@ -595,66 +526,98 @@ class VoiceBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="*How was your experience?*",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
     
-    def feedback(self, update: Update, context: CallbackContext) -> None:
+    async def feedback(self, update: Update, context: CallbackContext) -> None:
         """Handle feedback command."""
-        self._request_feedback(update, context)
+        await self._request_feedback(update, context)
     
-    def handle_text(self, update: Update, context: CallbackContext) -> None:
+    async def handle_text(self, update: Update, context: CallbackContext) -> None:
         """Handle direct text messages."""
         # Check if this is part of a conversation
         if context.user_data.get('conversation'):
             return
         
         # Otherwise, start conversion process
-        self.start_conversion(update, context)
+        await self.start_conversion(update, context)
     
-    def handle_voice_message(self, update: Update, context: CallbackContext) -> None:
+    async def handle_voice_message(self, update: Update, context: CallbackContext) -> None:
         """Convert voice message to text and then to selected voice."""
-        # In a real implementation, we'd use speech-to-text here
-        # For now, we'll just prompt for text
-        update.message.reply_text(
+        await update.message.reply_text(
             "🎙️ *Voice Message Received*\n\n"
             "I currently support converting text to voice. "
             "Please send me the text you'd like to convert or use /convert to start.",
             parse_mode="Markdown"
         )
     
-    def cancel(self, update: Update, context: CallbackContext) -> int:
+    async def cancel(self, update: Update, context: CallbackContext) -> int:
         """Cancel the current conversation."""
-        update.message.reply_text(
+        await update.message.reply_text(
             "Operation cancelled. Use /convert to start again."
         )
         return ConversationHandler.END
     
-    def error_handler(self, update: Update, context: CallbackContext) -> None:
+    async def error_handler(self, update: Update, context: CallbackContext) -> None:
         """Handle errors."""
         logger.error(msg="Exception while handling update:", exc_info=context.error)
         
         if update and update.effective_message:
-            update.effective_message.reply_text(
+            await update.effective_message.reply_text(
                 "😢 *Oops! Something went wrong.*\n\n"
                 "Please try again later or contact support if the problem persists.",
                 parse_mode="Markdown"
             )
 
-def main():
-    """Start the bot."""
-    # Get Telegram bot token from environment
-    TOKEN = os.getenv("8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A")
-    if not TOKEN:
-        raise ValueError("Please set the TELEGRAM_BOT_TOKEN environment variable")
-    
-    # Create and start bot
-    bot = VoiceBot(TOKEN)
-    bot.updater.start_polling()
-    bot.updater.idle()
+    def run(self):
+        """Run the bot."""
+        application = Application.builder().token(self.token).build()
+        
+        # Register handlers
+        application.add_handler(CommandHandler('start', self.start))
+        application.add_handler(CommandHandler('help', self.help))
+        application.add_handler(CommandHandler('voice_quality', self.voice_quality))
+        application.add_handler(CommandHandler('custom_voice', self.custom_voice))
+        application.add_handler(CommandHandler('feedback', self.feedback))
+        
+        # Conversation handler
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('convert', self.start_conversion)],
+            states={
+                SELECTING_VOICE: [
+                    CallbackQueryHandler(self.select_voice, pattern='^voice_.*$')
+                ],
+                SELECTING_LANGUAGE: [
+                    CallbackQueryHandler(self.select_language, pattern='^lang_.*$')
+                ],
+                CUSTOMIZING_VOICE: [
+                    CallbackQueryHandler(self.customize_voice, pattern='^tone_.*$'),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.process_text)
+                ],
+                UPLOADING_VOICE: [
+                    MessageHandler(filters.VOICE, self.handle_voice_upload),
+                    MessageHandler(filters.AUDIO, self.handle_voice_upload),
+                ],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel)],
+        )
+        application.add_handler(conv_handler)
+        
+        # Message handlers
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
+        application.add_handler(MessageHandler(filters.VOICE, self.handle_voice_message))
+        
+        # Error handler
+        application.add_error_handler(self.error_handler)
+        
+        # Start the Bot
+        application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    # Initialize and run the bot
+    bot = VoiceBot("8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A")
+    bot.run()
