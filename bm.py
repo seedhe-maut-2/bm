@@ -126,11 +126,11 @@ Please join our channels first to use this bot:
 """
     keyboard = [
         [
-            InlineKeyboardButton("Channel 1", url="https://t.me/+RhlQLyOfQ48xMjI1"),
-            InlineKeyboardButton("Channel 2", url="https://t.me/+ZyYHoZg-qL0zN2Nl"),
-            InlineKeyboardButton("Channel 3", url="https://t.me/DARKMETHODHUB")
+            InlineKeyboardButton("📢 Main Channel", url="https://t.me/+RhlQLyOfQ48xMjI1"),
+            InlineKeyboardButton("🔔 Backup Channel", url="https://t.me/+ZyYHoZg-qL0zN2Nl")
         ],
-        [InlineKeyboardButton("✅ I've Joined", callback_data='check_join')]
+        [InlineKeyboardButton("✅ Verify Join", callback_data='check_join')],
+        [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -166,17 +166,38 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             chat_member = await context.bot.get_chat_member(VERIFICATION_CHANNEL_ID, user_id)
             if chat_member.status in ['member', 'administrator', 'creator']:
-                keyboard = [[InlineKeyboardButton("Get Videos", callback_data='videos')]]
+                keyboard = [
+                    [InlineKeyboardButton("🎬 Get Videos", callback_data='videos')],
+                    [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
+                ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_caption(
-                    caption="✅ Thanks for joining! Click below to get videos:\n\n⚠️ Note: Videos are protected and cannot be saved or forwarded.",
-                    reply_markup=reply_markup
+                    caption="""
+✅ <b>Verification Successful!</b>
+
+🎥 Now you can access our exclusive video collection.
+
+⚠️ <b>Important Notes:</b>
+- Videos are protected content
+- Cannot be saved or forwarded
+- Auto-delete after 4 hours
+
+📌 Channel ID: <code>-1002267436984</code>
+""",
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
                 )
             else:
-                await query.edit_message_caption(caption="❌ Please join all channels first to access videos.")
+                await query.edit_message_caption(
+                    caption="❌ <b>Verification Failed!</b>\n\nPlease join all required channels first to access videos.",
+                    parse_mode='HTML'
+                )
         except Exception as e:
             logger.error(f"Error checking membership: {e}")
-            await query.edit_message_caption(caption="⚠️ Couldn't verify your channel membership. Please try again /start.")
+            await query.edit_message_caption(
+                caption="⚠️ <b>Error verifying membership!</b>\n\nPlease try again or contact support.",
+                parse_mode='HTML'
+            )
     
     elif query.data == 'videos':
         user_progress[user_id]['last_sent'] = 0
@@ -184,6 +205,37 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     elif query.data == 'next':
         asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id))
+    
+    elif query.data == 'help':
+        help_text = """
+ℹ️ <b>Help Center</b>
+
+🎥 <b>How to use this bot:</b>
+1. Join all required channels
+2. Click "Verify Join"
+3. Click "Get Videos" to start receiving content
+
+🔒 <b>Content Protection:</b>
+- Videos cannot be saved or forwarded
+- All content auto-deletes after 4 hours
+
+📌 <b>Channel ID:</b> <code>-1002267436984</code>
+
+⚠️ <b>Important:</b>
+- Do not share videos outside our channels
+- Violations will result in a ban
+"""
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data='check_join')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            await query.edit_message_caption(
+                caption=help_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Error showing help: {e}")
 
 async def send_video_task(bot, user_id, chat_id, msg_id):
     """Task to send a single video with error handling and content protection"""
@@ -238,12 +290,15 @@ async def send_batch(bot, user_id, chat_id):
     
     if sent_count > 0:
         user_progress[user_id]['last_sent'] = end_msg
-        keyboard = [[InlineKeyboardButton("Next", callback_data='next')]]
+        keyboard = [
+            [InlineKeyboardButton("⏭ Next Batch", callback_data='next')],
+            [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         control_message = await bot.send_message(
             chat_id=chat_id,
-            text=f"Sent {sent_count} protected videos (will auto-delete in {DELETE_AFTER_SECONDS//60} mins).",
+            text=f"📦 Sent {sent_count} protected videos\n⏳ Auto-delete in {DELETE_AFTER_SECONDS//3600} hours",
             reply_markup=reply_markup
         )
         # Schedule control message deletion with tracking
@@ -252,7 +307,7 @@ async def send_batch(bot, user_id, chat_id):
     else:
         error_message = await bot.send_message(
             chat_id=chat_id,
-            text="No more videos available or failed to send."
+            text="❌ No more videos available or failed to send.\nPlease try again later."
         )
         # Schedule error message deletion with tracking
         delete_task = asyncio.create_task(delete_message_after_delay(chat_id, error_message.message_id, DELETE_AFTER_SECONDS))
@@ -276,7 +331,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"⏳ <b>Uptime:</b> {days}d {hours}h {minutes}m {seconds}s\n"
         f"👥 <b>Total Users:</b> {total_users}\n"
         f"📊 <b>Active Users:</b> {len(user_progress)}\n"
-        f"🚫 <b>Blocked Users:</b> {len(blocked_users)}\n"
+        f"��� <b>Blocked Users:</b> {len(blocked_users)}\n"
         f"🎬 <b>Total Videos Sent:</b> {total_videos}\n"
         f"🔒 <b>Content Protection:</b> Enabled\n"
         f"📅 <b>Last Start:</b> {bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -431,7 +486,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         try:
             error_message = await context.bot.send_message(
                 chat_id=user_id,
-                text="Sorry, an error occurred. Please try again later."
+                text="❌ Sorry, an error occurred. Please try again later."
             )
             # Schedule error message deletion
             asyncio.create_task(delete_message_after_delay(error_message.chat_id, error_message.message_id, DELETE_AFTER_SECONDS))
