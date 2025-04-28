@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
 import asyncio
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, InputFile
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -41,6 +41,23 @@ logger = logging.getLogger(__name__)
 
 # Global application reference for cleanup tasks
 application = None
+
+# Brutal ASCII Art
+BRUTAL_ASCII = """
+██████╗░██████╗░░█████╗░████████╗░█████╗░██╗░░░░░
+██╔══██╗██╔══██╗██╔══██╗╚══██╔══╝██╔══██╗██║░░░░░
+██████╦╝██████╔╝██║░░██║░░░██║░░░██║░░██║██║░░░░░
+██╔══██╗██╔══██╗██║░░██║░░░██║░░░██║░░██║██║░░░░░
+██████╦╝██║░░██║╚█████╔╝░░░██║░░░╚█████╔╝███████╗
+╚═════╝░╚═╝░░╚═╝░╚════╝░░░░╚═╝░░░░╚════╝░╚══════╝
+
+░██████╗░███████╗███╗░░██╗███████╗██████╗░██╗░█████╗░███╗░░██╗
+██╔════╝░██╔════╝████╗░██║██╔════╝██╔══██╗██║██╔══██╗████╗░██║
+██║░░██╗░█████╗░░██╔██╗██║█████╗░░██████╔╝██║██║░░██║██╔██╗██║
+██║░░╚██╗██╔══╝░░██║╚████║██╔══╝░░██╔══██╗██║██║░░██║██║╚████║
+╚██████╔╝███████╗██║░╚███║███████╗██║░░██║██║╚█████╔╝██║░╚███║
+░╚═════╝░╚══════╝╚═╝░░╚══╝╚══════╝╚═╝░░╚═╝╚═╝░╚════╝░╚═╝░░╚══╝
+"""
 
 async def delete_message_with_retry(chat_id: int, message_id: int):
     """Delete a message with retry logic"""
@@ -92,7 +109,7 @@ async def cleanup_user_tasks(user_id: int):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if user.id in blocked_users:
-        await update.message.reply_text("🚫 You are blocked from using this bot.")
+        await update.message.reply_text("🚫 YOU ARE BANNED FROM THIS REALM! 🚫")
         return
     
     global total_users
@@ -112,29 +129,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user.id not in task_semaphores:
         task_semaphores[user.id] = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
     
-    # Notify admin about new user
-    asyncio.create_task(notify_admin(context.bot, f"👤 New user:\nID: {user.id}\nUsername: @{user.username}\nName: {user.full_name}"))
-    
-    welcome_text = """
-🎬 <b>Welcome to Video Bot!</b> 🎥
+    # Brutal welcome message
+    welcome_text = f"""
+╔══════════════════════════════════╗
+║  🔥 WELCOME TO THE BRUTAL ZONE! 🔥  ║
+╚══════════════════════════════════╝
 
-Here you can get access to our exclusive video collection.
+{BRUTAL_ASCII}
 
-⚠️ <b>Important:</b> Videos are protected content and cannot be saved or forwarded.
+⚡ <b>WARNING:</b> This is a HIGH-SECURITY zone!
+🛡️ All content is PROTECTED and TRACKED!
 
-Please join our channels first to use this bot:
+<b>JOIN THESE CHANNELS TO PROCEED:</b>
 """
     keyboard = [
         [
-            InlineKeyboardButton("📢 Main Channel", url="https://t.me/+RhlQLyOfQ48xMjI1"),
-            InlineKeyboardButton("🔔 Backup Channel", url="https://t.me/+ZyYHoZg-qL0zN2Nl")
+            InlineKeyboardButton("🔥 MAIN CHANNEL", url="https://t.me/+RhlQLyOfQ48xMjI1"),
+            InlineKeyboardButton("💀 SECONDARY", url="https://t.me/+ZyYHoZg-qL0zN2Nl")
         ],
-        [InlineKeyboardButton("✅ Verify Join", callback_data='check_join')],
-        [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
+        [
+            InlineKeyboardButton("☠️ DARK HUB", url="https://t.me/DARKMETHODHUB"),
+            InlineKeyboardButton("✅ VERIFY JOIN", callback_data='check_join')
+        ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send welcome message with photo
+    # Send brutal welcome message with photo
     sent_message = await update.message.reply_photo(
         photo="https://t.me/bshshsubjsus/4",
         caption=welcome_text,
@@ -142,14 +162,31 @@ Please join our channels first to use this bot:
         parse_mode='HTML'
     )
     
-    # Schedule welcome message deletion
+    # Schedule message deletion
     delete_task = asyncio.create_task(delete_message_after_delay(sent_message.chat_id, sent_message.message_id, DELETE_AFTER_SECONDS))
     sent_messages[user.id].append((sent_message.chat_id, sent_message.message_id, delete_task))
+
+    # Notify admin about new user in a brutal way
+    brutal_notification = f"""
+☠️ NEW USER ALERT! ☠️
+━━━━━━━━━━━━━━━━━━
+🆔 ID: <code>{user.id}</code>
+👤 NAME: {user.full_name}
+📛 USERNAME: @{user.username if user.username else 'N/A'}
+⏱ TIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+━━━━━━━━━━━━━━━━━━
+TOTAL USERS: {total_users}
+"""
+    asyncio.create_task(notify_admin(context.bot, brutal_notification))
 
 async def notify_admin(bot, message: str):
     for admin_id in ADMIN_IDS:
         try:
-            await bot.send_message(chat_id=admin_id, text=message)
+            await bot.send_message(
+                chat_id=admin_id,
+                text=message,
+                parse_mode='HTML'
+            )
         except Exception as e:
             logger.error(f"Failed to notify admin {admin_id}: {e}")
 
@@ -159,43 +196,40 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = query.from_user.id
     
     if user_id in blocked_users:
-        await query.edit_message_text(text="🚫 You are blocked from using this bot.")
+        await query.edit_message_text(text="🚫 YOU HAVE BEEN EXILED FROM THIS REALM!")
         return
 
     if query.data == 'check_join':
         try:
             chat_member = await context.bot.get_chat_member(VERIFICATION_CHANNEL_ID, user_id)
             if chat_member.status in ['member', 'administrator', 'creator']:
-                keyboard = [
-                    [InlineKeyboardButton("🎬 Get Videos", callback_data='videos')],
-                    [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
-                ]
+                keyboard = [[InlineKeyboardButton("🔥 GET CONTENT", callback_data='videos')]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                brutal_access = """
+╔══════════════════════════════════╗
+║   ACCESS GRANTED! WELCOME!       ║
+╚══════════════════════════════════╝
+
+⚠️ <b>WARNING:</b> All content is:
+- PROTECTED 🛡️
+- TRACKED 🔍
+- AUTO-DELETING 💣
+"""
                 await query.edit_message_caption(
-                    caption="""
-✅ <b>Verification Successful!</b>
-
-🎥 Now you can access our exclusive video collection.
-
-⚠️ <b>Important Notes:</b>
-- Videos are protected content
-- Cannot be saved or forwarded
-- Auto-delete after 4 hours
-
-📌 Channel ID: <code>-1002267436984</code>
-""",
+                    caption=brutal_access,
                     reply_markup=reply_markup,
                     parse_mode='HTML'
                 )
             else:
                 await query.edit_message_caption(
-                    caption="❌ <b>Verification Failed!</b>\n\nPlease join all required channels first to access videos.",
+                    caption="❌ ACCESS DENIED! JOIN ALL CHANNELS FIRST! ❌",
                     parse_mode='HTML'
                 )
         except Exception as e:
             logger.error(f"Error checking membership: {e}")
             await query.edit_message_caption(
-                caption="⚠️ <b>Error verifying membership!</b>\n\nPlease try again or contact support.",
+                caption="⚠️ SYSTEM ERROR! TRY AGAIN WITH /start",
                 parse_mode='HTML'
             )
     
@@ -205,37 +239,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     elif query.data == 'next':
         asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id))
-    
-    elif query.data == 'help':
-        help_text = """
-ℹ️ <b>Help Center</b>
-
-🎥 <b>How to use this bot:</b>
-1. Join all required channels
-2. Click "Verify Join"
-3. Click "Get Videos" to start receiving content
-
-🔒 <b>Content Protection:</b>
-- Videos cannot be saved or forwarded
-- All content auto-deletes after 4 hours
-
-📌 <b>Channel ID:</b> <code>-1002267436984</code>
-
-⚠️ <b>Important:</b>
-- Do not share videos outside our channels
-- Violations will result in a ban
-"""
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data='check_join')]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_caption(
-                caption=help_text,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            logger.error(f"Error showing help: {e}")
 
 async def send_video_task(bot, user_id, chat_id, msg_id):
     """Task to send a single video with error handling and content protection"""
@@ -290,16 +293,23 @@ async def send_batch(bot, user_id, chat_id):
     
     if sent_count > 0:
         user_progress[user_id]['last_sent'] = end_msg
-        keyboard = [
-            [InlineKeyboardButton("⏭ Next Batch", callback_data='next')],
-            [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
-        ]
+        keyboard = [[InlineKeyboardButton("🔥 NEXT BATCH", callback_data='next')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        brutal_batch = f"""
+╔══════════════════════════════════╗
+║  BATCH DELIVERED! 💣            ║
+╚══════════════════════════════════╝
+
+📦 CONTENT: {sent_count} protected files
+💣 AUTO-DELETE: {DELETE_AFTER_SECONDS//60} minutes
+🛡️ PROTECTION: ACTIVE
+"""
         control_message = await bot.send_message(
             chat_id=chat_id,
-            text=f"📦 Sent {sent_count} protected videos\n⏳ Auto-delete in {DELETE_AFTER_SECONDS//3600} hours",
-            reply_markup=reply_markup
+            text=brutal_batch,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
         )
         # Schedule control message deletion with tracking
         delete_task = asyncio.create_task(delete_message_after_delay(chat_id, control_message.message_id, DELETE_AFTER_SECONDS))
@@ -307,13 +317,13 @@ async def send_batch(bot, user_id, chat_id):
     else:
         error_message = await bot.send_message(
             chat_id=chat_id,
-            text="❌ No more videos available or failed to send.\nPlease try again later."
+            text="💀 SYSTEM OVERLOAD! TRY AGAIN LATER!",
+            parse_mode='HTML'
         )
         # Schedule error message deletion with tracking
         delete_task = asyncio.create_task(delete_message_after_delay(chat_id, error_message.message_id, DELETE_AFTER_SECONDS))
         sent_messages[user_id].append((chat_id, error_message.message_id, delete_task))
 
-# Admin commands
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id not in ADMIN_IDS:
         return
@@ -326,25 +336,28 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     total_videos = sum(stats.get('video_count', 0) for stats in user_stats.values())
     
-    status_text = (
-        f"🤖 <b>Bot Status</b>\n\n"
-        f"⏳ <b>Uptime:</b> {days}d {hours}h {minutes}m {seconds}s\n"
-        f"👥 <b>Total Users:</b> {total_users}\n"
-        f"📊 <b>Active Users:</b> {len(user_progress)}\n"
-        f"��� <b>Blocked Users:</b> {len(blocked_users)}\n"
-        f"🎬 <b>Total Videos Sent:</b> {total_videos}\n"
-        f"🔒 <b>Content Protection:</b> Enabled\n"
-        f"📅 <b>Last Start:</b> {bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    
-    await update.message.reply_text(status_text, parse_mode='HTML')
+    brutal_status = f"""
+╔══════════════════════════════════╗
+║  BRUTAL BOT STATUS 💀            ║
+╚══════════════════════════════════╝
+
+⏳ UPTIME: {days}d {hours}h {minutes}m {seconds}s
+👥 TOTAL USERS: {total_users}
+🔫 BLOCKED USERS: {len(blocked_users)}
+🎬 VIDEOS SENT: {total_videos}
+🛡️ PROTECTION: ACTIVE
+💣 AUTO-DELETE: {DELETE_AFTER_SECONDS//3600}h
+
+⚡ LAST START: {bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    await update.message.reply_text(brutal_status, parse_mode='HTML')
 
 async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /block <user_id>")
+        await update.message.reply_text("💀 USAGE: /block <user_id>")
         return
     
     try:
@@ -352,93 +365,128 @@ async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         blocked_users.add(user_id)
         await cleanup_user_messages(user_id)
         await cleanup_user_tasks(user_id)
-        await update.message.reply_text(f"✅ User {user_id} has been blocked.")
+        
+        brutal_block = f"""
+╔══════════════════════════════════╗
+║  USER TERMINATED! ☠️             ║
+╚══════════════════════════════════╝
+
+🆔 ID: {user_id}
+⏱ TIME: {datetime.now().strftime('%H:%M:%S')}
+"""
+        await update.message.reply_text(brutal_block, parse_mode='HTML')
     except ValueError:
-        await update.message.reply_text("Invalid user ID. Please provide a numeric ID.")
+        await update.message.reply_text("💀 INVALID USER ID! USE NUMBERS ONLY!")
 
 async def unblock_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /unblock <user_id>")
+        await update.message.reply_text("💀 USAGE: /unblock <user_id>")
         return
     
     try:
         user_id = int(context.args[0])
         if user_id in blocked_users:
             blocked_users.remove(user_id)
-            await update.message.reply_text(f"✅ User {user_id} has been unblocked.")
+            brutal_unblock = f"""
+╔══════════════════════════════════╗
+║  USER PARDONED! 🕊️               ║
+╚══════════════════════════════════╝
+
+🆔 ID: {user_id}
+⏱ TIME: {datetime.now().strftime('%H:%M:%S')}
+"""
+            await update.message.reply_text(brutal_unblock, parse_mode='HTML')
         else:
-            await update.message.reply_text(f"User {user_id} is not blocked.")
+            await update.message.reply_text(f"USER {user_id} IS NOT IN THE BLACKLIST!")
     except ValueError:
-        await update.message.reply_text("Invalid user ID. Please provide a numeric ID.")
+        await update.message.reply_text("💀 INVALID USER ID! USE NUMBERS ONLY!")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
+        await update.message.reply_text("💀 USAGE: /broadcast <message>")
         return
     
     message = ' '.join(context.args)
     success = 0
     failed = 0
     
-    for user_id in user_progress:
+    brutal_header = """
+╔══════════════════════════════════╗
+║  BRUTAL BROADCAST INITIATED! 📢  ║
+╚══════════════════════════════════╝
+"""
+    await update.message.reply_text(brutal_header, parse_mode='HTML')
+    
+    progress_msg = await update.message.reply_text("⚡ SENDING TO ALL USERS...")
+    
+    for user_id in user_stats:
         try:
-            await context.bot.send_message(chat_id=user_id, text=message)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"📢 ADMIN MESSAGE:\n\n{message}"
+            )
             success += 1
+            if success % 10 == 0:  # Update progress every 10 sends
+                await progress_msg.edit_text(f"⚡ PROGRESS: {success} sent, {failed} failed")
             await asyncio.sleep(0.1)  # Rate limiting
         except Exception as e:
             logger.error(f"Failed to send broadcast to {user_id}: {e}")
             failed += 1
     
-    await update.message.reply_text(
-        f"📢 Broadcast completed:\n"
-        f"✅ Success: {success}\n"
-        f"❌ Failed: {failed}"
-    )
+    brutal_result = f"""
+╔══════════════════════════════════╗
+║  BROADCAST COMPLETE! 💥         ║
+╚══════════════════════════════════╝
 
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List all users with their details"""
+✅ SUCCESS: {success}
+❌ FAILED: {failed}
+"""
+    await progress_msg.delete()
+    await update.message.reply_text(brutal_result, parse_mode='HTML')
+
+async def export_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export all users to a text file"""
     if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not user_stats:
-        await update.message.reply_text("No users found.")
+        await update.message.reply_text("💀 NO USERS TO EXPORT!")
         return
     
-    message = "👥 <b>User List</b>:\n\n"
-    for user_id, stats in user_stats.items():
-        first_seen = stats.get('first_seen', datetime.now())
-        last_active = stats.get('last_active', datetime.now())
-        usage_time = last_active - first_seen
-        days = usage_time.days
-        hours, remainder = divmod(usage_time.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
+    # Create a temporary file
+    filename = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write("USER EXPORT - BRUTAL BOT\n")
+        f.write(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total users: {len(user_stats)}\n")
+        f.write("="*50 + "\n\n")
         
-        message += (
-            f"🆔 <b>ID</b>: {user_id}\n"
-            f"👤 <b>Name</b>: {stats.get('full_name', 'N/A')}\n"
-            f"📛 <b>Username</b>: @{stats.get('username', 'N/A')}\n"
-            f"⏱ <b>Usage Time</b>: {days}d {hours}h {minutes}m\n"
-            f"🎬 <b>Videos Watched</b>: {stats.get('video_count', 0)}\n"
-            f"📅 <b>First Seen</b>: {first_seen.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🔍 <b>Last Active</b>: {last_active.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🚫 <b>Blocked</b>: {'Yes' if user_id in blocked_users else 'No'}\n"
-            f"────────────────────\n"
+        for user_id, stats in user_stats.items():
+            f.write(f"🆔 ID: {user_id}\n")
+            f.write(f"👤 NAME: {stats.get('full_name', 'N/A')}\n")
+            f.write(f"📛 USERNAME: @{stats.get('username', 'N/A')}\n")
+            f.write(f"📅 FIRST SEEN: {stats.get('first_seen', 'N/A')}\n")
+            f.write(f"⏱ LAST ACTIVE: {stats.get('last_active', 'N/A')}\n")
+            f.write(f"🎬 VIDEOS: {stats.get('video_count', 0)}\n")
+            f.write(f"🚫 BLOCKED: {'YES' if user_id in blocked_users else 'NO'}\n")
+            f.write("-"*50 + "\n")
+    
+    # Send the file
+    with open(filename, 'rb') as f:
+        await update.message.reply_document(
+            document=InputFile(f),
+            caption=f"📊 USER EXPORT: {len(user_stats)} users",
+            parse_mode='HTML'
         )
     
-    # Telegram has a message length limit, so we might need to split
-    if len(message) > 4096:
-        parts = [message[i:i+4096] for i in range(0, len(message), 4096)]
-        for part in parts:
-            await update.message.reply_text(part, parse_mode='HTML')
-            await asyncio.sleep(0.5)
-    else:
-        await update.message.reply_text(message, parse_mode='HTML')
+    # Clean up
+    os.remove(filename)
 
 async def user_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show statistics about user activity"""
@@ -446,7 +494,7 @@ async def user_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     if not user_stats:
-        await update.message.reply_text("No user statistics available.")
+        await update.message.reply_text("💀 NO USER DATA AVAILABLE!")
         return
     
     total_videos = sum(stats.get('video_count', 0) for stats in user_stats.values())
@@ -460,33 +508,38 @@ async def user_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reverse=True
     )[:5]
     
-    message = (
-        f"📊 <b>User Statistics</b>\n\n"
-        f"👥 <b>Total Users</b>: {len(user_stats)}\n"
-        f"🔄 <b>Active Users</b>: {active_users}\n"
-        f"🚫 <b>Blocked Users</b>: {len(blocked_users)}\n"
-        f"🎬 <b>Total Videos Sent</b>: {total_videos}\n"
-        f"📈 <b>Average Videos per User</b>: {avg_videos:.1f}\n\n"
-        f"🏆 <b>Top Users by Video Count</b>:\n"
-    )
+    brutal_stats = f"""
+╔══════════════════════════════════╗
+║  BRUTAL USER STATISTICS 📊       ║
+╚══════════════════════════════════╝
+
+👥 TOTAL USERS: {len(user_stats)}
+🔥 ACTIVE USERS: {active_users}
+💀 BLOCKED USERS: {len(blocked_users)}
+🎬 TOTAL VIDEOS SENT: {total_videos}
+📈 AVG VIDEOS PER USER: {avg_videos:.1f}
+
+🏆 TOP 5 USERS:
+"""
     
     for i, (user_id, stats) in enumerate(top_users, 1):
-        message += (
+        brutal_stats += (
             f"{i}. {stats.get('full_name', 'N/A')} (@{stats.get('username', 'N/A')})\n"
             f"   🆔: {user_id} | 🎬: {stats.get('video_count', 0)}\n"
         )
     
-    await update.message.reply_text(message, parse_mode='HTML')
+    await update.message.reply_text(brutal_stats, parse_mode='HTML')
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    logger.error(msg="BRUTAL ERROR:", exc_info=context.error)
     
     if update and hasattr(update, 'effective_user'):
         user_id = update.effective_user.id
         try:
             error_message = await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ Sorry, an error occurred. Please try again later."
+                text="💀 SYSTEM MELTDOWN! TRY AGAIN LATER!",
+                parse_mode='HTML'
             )
             # Schedule error message deletion
             asyncio.create_task(delete_message_after_delay(error_message.chat_id, error_message.message_id, DELETE_AFTER_SECONDS))
@@ -506,13 +559,15 @@ def main() -> None:
     application.add_handler(CommandHandler('block', block_user))
     application.add_handler(CommandHandler('unblock', unblock_user))
     application.add_handler(CommandHandler('broadcast', broadcast))
-    application.add_handler(CommandHandler('users', list_users))
+    application.add_handler(CommandHandler('export', export_users))  # New export command
     application.add_handler(CommandHandler('stats', user_stats_command))
     
     # Error handler
     application.add_error_handler(error_handler)
     
-    # Start the bot
+    # Start the bot with brutal style
+    logger.info(BRUTAL_ASCII)
+    logger.info("🔥 BRUTAL BOT IS COMING ONLINE! 🔥")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
