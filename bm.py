@@ -129,7 +129,7 @@ Please join our channels first to use this bot:
 """
     keyboard = [
         [
-            InlineKeyboardButton("Channel 1", url="https://t.me/+RhlQLyOfQ48xMjI1"),
+            InlineKeyboardButton("Channel 1", url="https://t.me/+kC_WnpSy-icyNmI1"),
             InlineKeyboardButton("Channel 2", url="https://t.me/+L1iX_sYvsSYzNDI1"),
             InlineKeyboardButton("Channel 3", url="https://t.me/+OOhMrSgdTOdjMGU1")
         ],
