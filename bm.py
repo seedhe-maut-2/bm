@@ -14,10 +14,10 @@ from telegram.ext import (
 )
 
 # Configuration
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg')
-CHANNEL_ID = -1002441094491  # Channel where videos are stored
-CHANNEL_ID_2 = -1002381113671  # Channel where 2 videos are stored
-CHANNEL_ID_3 = -1002287078636  # Channel where 3 videos are stored
+BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8087788328:AAHjdilblfkK3YP9oD0elv2GIq25vI2skKI')
+CHANNEL_ID = -1002679575112  # Channel where videos are stored
+CHANNEL_ID_2 = -1002519127627  # Channel where 2 videos are stored
+CHANNEL_ID_3 = -1002641054833  # Channel where 3 videos are stored
 
 VERIFICATION_CHANNEL_ID = -1002512368825  # Channel users must join
 ADMIN_IDS = {8167507955}  # Admin user IDs
@@ -170,9 +170,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             chat_member = await context.bot.get_chat_member(VERIFICATION_CHANNEL_ID, user_id)
             if chat_member.status in ['member', 'administrator', 'creator']:
                 keyboard = [
-                    [InlineKeyboardButton("Get Videos from Channel 1", callback_data='videos_1')],
-                    [InlineKeyboardButton("Get Videos from Channel 2", callback_data='videos_2')],
-                    [InlineKeyboardButton("Get Videos from Channel 3", callback_data='videos_3')]
+                    [InlineKeyboardButton("Full sexii Video ♨️", callback_data='videos_1')],
+                    [InlineKeyboardButton("Sexi Webseries🥠", callback_data='videos_2')],
+                    [InlineKeyboardButton("Movies video🍵", callback_data='videos_3')]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_caption(
@@ -241,7 +241,7 @@ async def send_batch(bot, user_id, chat_id, channel_num):
         }
     
     start_msg = user_progress[user_id]['last_sent']
-    end_msg = start_msg + 50
+    end_msg = start_msg + 20
     sent_count = 0
     
     # Create tasks for sending videos
