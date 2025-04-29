@@ -19,7 +19,7 @@ CHANNEL_ID = -1002679575112  # Channel where videos are stored
 CHANNEL_ID_2 = -1002519127627  # Channel where 2 videos are stored
 CHANNEL_ID_3 = -1002641054833  # Channel where 3 videos are stored
 
-VERIFICATION_CHANNEL_ID = -1002512368825  # Channel users must join
+VERIFICATION_CHANNEL_ID = -1002436203627  # Channel users must join
 ADMIN_IDS = {8167507955}  # Admin user IDs
 DELETE_AFTER_SECONDS = 14400  # Auto-delete messages after 4 hours
 MAX_CONCURRENT_TASKS = 10  # Limit concurrent video sending tasks per user
@@ -130,8 +130,8 @@ Please join our channels first to use this bot:
     keyboard = [
         [
             InlineKeyboardButton("Channel 1", url="https://t.me/+RhlQLyOfQ48xMjI1"),
-            InlineKeyboardButton("Channel 2", url="https://t.me/+ZyYHoZg-qL0zN2Nl"),
-            InlineKeyboardButton("Channel 3", url="https://t.me/DARKMETHODHUB")
+            InlineKeyboardButton("Channel 2", url="https://t.me/+L1iX_sYvsSYzNDI1"),
+            InlineKeyboardButton("Channel 3", url="https://t.me/+OOhMrSgdTOdjMGU1")
         ],
         [InlineKeyboardButton("✅ I've Joined", callback_data='check_join')]
     ]
