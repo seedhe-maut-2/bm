@@ -119,7 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     asyncio.create_task(notify_admin(context.bot, f"👤 New user:\nID: {user.id}\nUsername: @{user.username}\nName: {user.full_name}"))
     
     welcome_text = """
-🎬 <b>Welcome to Video Bot!</b> �
+🎬 <b>Welcome to Video Bot!</b> 🎥
 
 Here you can get access to our exclusive video collection.
 
@@ -139,7 +139,7 @@ Please join our channels first to use this bot:
     
     # Send welcome message with photo
     sent_message = await update.message.reply_photo(
-        photo="https://t.me/bshshsubjsus/4",
+        photo="https://t.me/bshshsubjsus/7",
         caption=welcome_text,
         reply_markup=reply_markup,
         parse_mode='HTML'
@@ -172,8 +172,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 keyboard = [
                     [InlineKeyboardButton("Full sexii Video ♨️", callback_data='videos_1')],
                     [InlineKeyboardButton("Sexi Webseries🥠", callback_data='videos_2')],
-                    [InlineKeyboardButton("Movies video🍵", callback_data='videos_3')],
-                    [InlineKeyboardButton("🔙 Back", callback_data='back_to_start')]
+                    [InlineKeyboardButton("Movies video🍵", callback_data='videos_3')]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_caption(
@@ -194,41 +193,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 '1': CHANNEL_ID,
                 '2': CHANNEL_ID_2,
                 '3': CHANNEL_ID_3
-            }[channel_num],
-            'channel_num': channel_num
+            }[channel_num]
         }
         asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id, channel_num))
     
     elif query.data == 'next':
         channel_num = user_progress[user_id].get('channel_num', '1')
         asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id, channel_num))
-    
-    elif query.data == 'back_to_start':
-        # Recreate the initial start menu
-        welcome_text = """
-🎬 <b>Welcome to Video Bot!</b> 🎥
-
-Here you can get access to our exclusive video collection.
-
-⚠️ <b>Important:</b> Videos are protected content and cannot be saved or forwarded.
-
-Please join our channels first to use this bot:
-"""
-        keyboard = [
-            [
-                InlineKeyboardButton("Channel 1", url="https://t.me/+RhlQLyOfQ48xMjI1"),
-                InlineKeyboardButton("Channel 2", url="https://t.me/+ZyYHoZg-qL0zN2Nl"),
-                InlineKeyboardButton("Channel 3", url="https://t.me/DARKMETHODHUB")
-            ],
-            [InlineKeyboardButton("✅ I've Joined", callback_data='check_join')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_caption(
-            caption=welcome_text,
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
 
 async def send_video_task(bot, user_id, chat_id, msg_id, channel_id):
     """Task to send a single video with error handling and content protection"""
@@ -291,18 +262,13 @@ async def send_batch(bot, user_id, chat_id, channel_num):
     
     if sent_count > 0:
         user_progress[user_id]['last_sent'] = end_msg
-        
-        # Create keyboard with Next and Back buttons
-        keyboard = [
-            [InlineKeyboardButton("Next", callback_data='next')],
-            [InlineKeyboardButton("🔙 Back", callback_data='back_to_start')]
-        ]
+        keyboard = [[InlineKeyboardButton("Next", callback_data='next')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         channel_name = {
-            '1': 'Full sexii Video ♨️',
-            '2': 'Sexi Webseries🥠',
-            '3': 'Movies video🍵'
+            '1': 'Channel 1',
+            '2': 'Channel 2',
+            '3': 'Channel 3'
         }[channel_num]
         
         control_message = await bot.send_message(
