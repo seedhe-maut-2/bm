@@ -16,6 +16,9 @@ from telegram.ext import (
 # Configuration
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg')
 CHANNEL_ID = -1002441094491  # Channel where videos are stored
+CHANNEL_ID_2 = -1002381113671  # Channel where 2 videos are stored
+CHANNEL_ID_3 = -1002287078636  # Channel where 3 videos are stored
+
 VERIFICATION_CHANNEL_ID = -1002512368825  # Channel users must join
 ADMIN_IDS = {8167507955}  # Admin user IDs
 DELETE_AFTER_SECONDS = 14400  # Auto-delete messages after 4 hours
@@ -166,10 +169,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             chat_member = await context.bot.get_chat_member(VERIFICATION_CHANNEL_ID, user_id)
             if chat_member.status in ['member', 'administrator', 'creator']:
-                keyboard = [[InlineKeyboardButton("Get Videos", callback_data='videos')]]
+                keyboard = [
+                    [InlineKeyboardButton("Get Videos from Channel 1", callback_data='videos_1')],
+                    [InlineKeyboardButton("Get Videos from Channel 2", callback_data='videos_2')],
+                    [InlineKeyboardButton("Get Videos from Channel 3", callback_data='videos_3')]
+                ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_caption(
-                    caption="✅ Thanks for joining! Click below to get videos:\n\n⚠️ Note: Videos are protected and cannot be saved or forwarded.",
+                    caption="✅ Thanks for joining! Choose a video source:\n\n⚠️ Note: Videos are protected and cannot be saved or forwarded.",
                     reply_markup=reply_markup
                 )
             else:
@@ -178,20 +185,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error(f"Error checking membership: {e}")
             await query.edit_message_caption(caption="⚠️ Couldn't verify your channel membership. Please try again /start.")
     
-    elif query.data == 'videos':
-        user_progress[user_id]['last_sent'] = 0
-        asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id))
+    elif query.data.startswith('videos_'):
+        channel_num = query.data.split('_')[1]
+        user_progress[user_id] = {
+            'last_sent': 0,
+            'channel_id': {
+                '1': CHANNEL_ID,
+                '2': CHANNEL_ID_2,
+                '3': CHANNEL_ID_3
+            }[channel_num]
+        }
+        asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id, channel_num))
     
     elif query.data == 'next':
-        asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id))
+        channel_num = user_progress[user_id].get('channel_num', '1')
+        asyncio.create_task(send_batch(context.bot, user_id, query.message.chat.id, channel_num))
 
-async def send_video_task(bot, user_id, chat_id, msg_id):
+async def send_video_task(bot, user_id, chat_id, msg_id, channel_id):
     """Task to send a single video with error handling and content protection"""
     try:
         async with task_semaphores[user_id]:
             sent_message = await bot.copy_message(
                 chat_id=chat_id,
-                from_chat_id=CHANNEL_ID,
+                from_chat_id=channel_id,
                 message_id=msg_id,
                 disable_notification=True,
                 protect_content=True  # This prevents saving/forwarding
@@ -212,9 +228,17 @@ async def send_video_task(bot, user_id, chat_id, msg_id):
         logger.error(f"Failed to copy message {msg_id} for user {user_id}: {e}")
         return False
 
-async def send_batch(bot, user_id, chat_id):
+async def send_batch(bot, user_id, chat_id, channel_num):
     if user_id not in user_progress or 'last_sent' not in user_progress[user_id]:
-        user_progress[user_id]['last_sent'] = 0
+        user_progress[user_id] = {
+            'last_sent': 0,
+            'channel_id': {
+                '1': CHANNEL_ID,
+                '2': CHANNEL_ID_2,
+                '3': CHANNEL_ID_3
+            }[channel_num],
+            'channel_num': channel_num
+        }
     
     start_msg = user_progress[user_id]['last_sent']
     end_msg = start_msg + 50
@@ -223,7 +247,7 @@ async def send_batch(bot, user_id, chat_id):
     # Create tasks for sending videos
     tasks = []
     for msg_id in range(start_msg + 1, end_msg + 1):
-        task = asyncio.create_task(send_video_task(bot, user_id, chat_id, msg_id))
+        task = asyncio.create_task(send_video_task(bot, user_id, chat_id, msg_id, user_progress[user_id]['channel_id']))
         tasks.append(task)
         user_tasks[user_id].append(task)
     
@@ -241,9 +265,15 @@ async def send_batch(bot, user_id, chat_id):
         keyboard = [[InlineKeyboardButton("Next", callback_data='next')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        channel_name = {
+            '1': 'Channel 1',
+            '2': 'Channel 2',
+            '3': 'Channel 3'
+        }[channel_num]
+        
         control_message = await bot.send_message(
             chat_id=chat_id,
-            text=f"Sent {sent_count} protected videos (will auto-delete in {DELETE_AFTER_SECONDS//60} mins).",
+            text=f"Sent {sent_count} protected videos from {channel_name} (will auto-delete in {DELETE_AFTER_SECONDS//60} mins).",
             reply_markup=reply_markup
         )
         # Schedule control message deletion with tracking
@@ -347,7 +377,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List all users with their details"""
+    """List all users with their details in a .txt file"""
     if update.effective_user.id not in ADMIN_IDS:
         return
     
@@ -355,35 +385,35 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("No users found.")
         return
     
-    message = "👥 <b>User List</b>:\n\n"
-    for user_id, stats in user_stats.items():
-        first_seen = stats.get('first_seen', datetime.now())
-        last_active = stats.get('last_active', datetime.now())
-        usage_time = last_active - first_seen
-        days = usage_time.days
-        hours, remainder = divmod(usage_time.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        
-        message += (
-            f"🆔 <b>ID</b>: {user_id}\n"
-            f"👤 <b>Name</b>: {stats.get('full_name', 'N/A')}\n"
-            f"📛 <b>Username</b>: @{stats.get('username', 'N/A')}\n"
-            f"⏱ <b>Usage Time</b>: {days}d {hours}h {minutes}m\n"
-            f"🎬 <b>Videos Watched</b>: {stats.get('video_count', 0)}\n"
-            f"📅 <b>First Seen</b>: {first_seen.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🔍 <b>Last Active</b>: {last_active.strftime('%Y-%m-%d %H:%M')}\n"
-            f"🚫 <b>Blocked</b>: {'Yes' if user_id in blocked_users else 'No'}\n"
-            f"────────────────────\n"
-        )
+    # Create a temporary file
+    with open('users_list.txt', 'w', encoding='utf-8') as f:
+        f.write("User List:\n\n")
+        for user_id, stats in user_stats.items():
+            first_seen = stats.get('first_seen', datetime.now())
+            last_active = stats.get('last_active', datetime.now())
+            usage_time = last_active - first_seen
+            days = usage_time.days
+            hours, remainder = divmod(usage_time.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            
+            f.write(
+                f"🆔 ID: {user_id}\n"
+                f"👤 Name: {stats.get('full_name', 'N/A')}\n"
+                f"📛 Username: @{stats.get('username', 'N/A')}\n"
+                f"⏱ Usage Time: {days}d {hours}h {minutes}m\n"
+                f"🎬 Videos Watched: {stats.get('video_count', 0)}\n"
+                f"📅 First Seen: {first_seen.strftime('%Y-%m-%d %H:%M')}\n"
+                f"🔍 Last Active: {last_active.strftime('%Y-%m-%d %H:%M')}\n"
+                f"🚫 Blocked: {'Yes' if user_id in blocked_users else 'No'}\n"
+                f"────────────────────\n"
+            )
     
-    # Telegram has a message length limit, so we might need to split
-    if len(message) > 4096:
-        parts = [message[i:i+4096] for i in range(0, len(message), 4096)]
-        for part in parts:
-            await update.message.reply_text(part, parse_mode='HTML')
-            await asyncio.sleep(0.5)
-    else:
-        await update.message.reply_text(message, parse_mode='HTML')
+    # Send the file
+    with open('users_list.txt', 'rb') as f:
+        await update.message.reply_document(
+            document=f,
+            caption="Here's the complete user list."
+        )
 
 async def user_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show statistics about user activity"""
