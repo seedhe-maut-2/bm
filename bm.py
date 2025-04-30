@@ -2,8 +2,8 @@ import os
 import requests
 import base64
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-from telegram.ext import CallbackContext
+from telegram.ext import Updater, CommandHandler, MessageHandler
+from telegram.ext import CallbackContext, filters  # Note lowercase 'filters'
 
 # Your GitHub Token and repository details
 GITHUB_TOKEN = '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'  # Replace with your GitHub token
@@ -73,7 +73,7 @@ def main():
     dispatcher.add_handler(CommandHandler('start', start))
     
     # Add message handler for videos
-    dispatcher.add_handler(MessageHandler(Filters.video, handle_video))
+    dispatcher.add_handler(MessageHandler(filters.VIDEO, handle_video))  # Note lowercase filters
     
     # Start polling for updates
     updater.start_polling()
