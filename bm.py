@@ -1,179 +1,117 @@
-import os
 import requests
 import telebot
-import time
-from telebot import TeleBot, types
-from datetime import datetime
+from urllib.parse import urlparse, parse_qs
+from bs4 import BeautifulSoup
 
-# Bot configuration
 TOKEN = '8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A'
 bot = telebot.TeleBot(TOKEN)
-OWNER_USERNAME = "seedhe_maut"
 
-# Instagram API configuration
-INSTA_HEADERS = {
-    'x-ig-app-id': '936619743392459',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
+def extract_instagram_id(url):
+    """Extract Instagram post ID from URL"""
+    parsed = urlparse(url)
+    if 'instagram.com' in parsed.netloc:
+        path = parsed.path.strip('/').split('/')
+        if len(path) >= 2 and path[0] == 'reel':
+            return path[1].split('?')[0]
+        elif len(path) >= 3 and path[1] == 'p':
+            return path[2].split('?')[0]
+    return None
 
-def safe_get(data, keys, default=None):
-    """Safely get nested dictionary values"""
-    for key in keys.split('.'):
-        try:
-            data = data.get(key, {})
-        except AttributeError:
-            return default
-    return data if data != {} else default
+def get_download_url(post_id):
+    """Get download URL from indownloader.app API"""
+    try:
+        # First get the page to extract the download link
+        page_url = f"https://indownloader.app/download.php?id={post_id}"
+        response = requests.get(page_url)
+        
+        # Parse the HTML to find the download link
+        soup = BeautifulSoup(response.text, 'html.parser')
+        download_link = soup.find('a', {'id': 'download-btn'})['href']
+        return download_link
+        
+    except Exception as e:
+        print(f"Error getting download URL: {e}")
+        return None
+
+def download_media(url):
+    """Download media from indownloader.app"""
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            return response.content
+        return None
+    except Exception as e:
+        print(f"Error downloading media: {e}")
+        return None
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = """
-    <b>🌟 Instagram Profile Info Bot 🌟</b>
+    📱 *Instagram Downloader Bot* 📱
 
-Send me an Instagram username to get:
-- Profile information
-- All public posts (photos/videos)
+Send me an Instagram post URL (reel or photo) and I'll download it for you!
 
-<b>Owner:</b> @seedhe_maut
+Examples:
+- https://www.instagram.com/reel/DJEdWQtN-H9/
+- https://www.instagram.com/p/Cxyz12345ab/
+
+Note: Only works with public posts.
     """
-    bot.send_message(message.chat.id, welcome_text, parse_mode='HTML')
-
-def get_instagram_profile(username):
-    url = f'https://www.instagram.com/api/v1/users/web_profile_info/?username={username}'
-    try:
-        response = requests.get(url, headers=INSTA_HEADERS, timeout=10)
-        if response.status_code == 200:
-            return response.json().get('data', {}).get('user')
-    except Exception:
-        return None
-    return None
-
-def get_instagram_posts(user_id):
-    url = f'https://www.instagram.com/api/v1/feed/user/{user_id}/?count=12'
-    try:
-        response = requests.get(url, headers=INSTA_HEADERS, timeout=10)
-        if response.status_code == 200:
-            return response.json().get('items', [])
-    except Exception:
-        return []
-    return []
-
-def format_post(post):
-    """Safely format post information with proper error handling"""
-    try:
-        post_type = "📷 Photo" if safe_get(post, 'media_type') == 1 else "🎥 Video"
-        caption = safe_get(post, 'caption.text', 'No caption')
-        like_count = safe_get(post, 'like_count', 0)
-        comment_count = safe_get(post, 'comment_count', 0)
-        timestamp = datetime.fromtimestamp(safe_get(post, 'taken_at', 0)).strftime('%Y-%m-%d %H:%M:%S')
-        
-        return f"""
-<b>{post_type}</b> • {timestamp}
-❤️ <b>{like_count}</b> • 💬 <b>{comment_count}</b>
-
-{caption}
-"""
-    except Exception:
-        return "📄 Post information"
-
-def get_media_url(post):
-    """Safely extract media URL from different post types"""
-    try:
-        if safe_get(post, 'media_type') == 1:  # Photo
-            return safe_get(post, 'image_versions2.candidates.0.url')
-        elif safe_get(post, 'media_type') == 2:  # Video
-            return safe_get(post, 'video_versions.0.url')
-        elif safe_get(post, 'media_type') == 8:  # Carousel
-            first_item = safe_get(post, 'carousel_media.0')
-            if safe_get(first_item, 'media_type') == 1:
-                return safe_get(first_item, 'image_versions2.candidates.0.url')
-            else:
-                return safe_get(first_item, 'video_versions.0.url')
-    except Exception:
-        return None
+    bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
-def handle_instagram_username(message):
-    user = message.text.strip().lstrip('@')
-    if not user:
+def handle_message(message):
+    url = message.text.strip()
+    
+    # Check if it's an Instagram URL
+    if 'instagram.com' not in url:
+        bot.reply_to(message, "❌ Please send a valid Instagram post URL")
         return
-
+    
+    # Extract post ID
+    post_id = extract_instagram_id(url)
+    if not post_id:
+        bot.reply_to(message, "❌ Couldn't extract post ID from URL")
+        return
+    
+    # Get download URL
+    bot.send_chat_action(message.chat.id, 'typing')
+    download_url = get_download_url(post_id)
+    if not download_url:
+        bot.reply_to(message, "❌ Failed to get download link")
+        return
+    
+    # Check if it's video or image
+    is_video = 'video' in download_url.lower() or 'mp4' in download_url.lower()
+    
     try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        
-        # Get profile info
-        profile = get_instagram_profile(user)
-        if not profile:
-            bot.reply_to(message, f"❌ Couldn't fetch profile for @{user}. Account may not exist or be private.")
-            return
+        if is_video:
+            # For videos, send as document to preserve quality
+            bot.send_video(
+                chat_id=message.chat.id,
+                video=download_url,
+                caption="Here's your downloaded video!",
+                supports_streaming=True
+            )
+        else:
+            # For images, send as photo
+            bot.send_photo(
+                chat_id=message.chat.id,
+                photo=download_url,
+                caption="Here's your downloaded image!"
+            )
             
-        # Send profile info
-        profile_msg = f"""
-<b>📷 Instagram Profile Info</b>
-
-<b>Username:</b> @{safe_get(profile, 'username')}
-<b>Name:</b> {safe_get(profile, 'full_name', 'N/A')}
-<b>🔒 Private:</b> {'✅' if safe_get(profile, 'is_private') else '❌'}
-        
-<b>👥 Followers:</b> {safe_get(profile, 'edge_followed_by.count', 0):,}
-<b>👤 Following:</b> {safe_get(profile, 'edge_follow.count', 0):,}
-<b>📮 Posts:</b> {safe_get(profile, 'edge_owner_to_timeline_media.count', 0):,}
-
-<b>📝 Bio:</b>
-{safe_get(profile, 'biography', 'No bio available')}
-        """
-        
-        bot.send_photo(
-            chat_id=message.chat.id,
-            photo=safe_get(profile, 'profile_pic_url'),
-            caption=profile_msg,
-            parse_mode='HTML'
-        )
-        
-        # Skip if private account
-        if safe_get(profile, 'is_private'):
-            bot.reply_to(message, "🔒 Private account - cannot fetch posts.")
-            return
-        
-        # Get and send posts
-        posts = get_instagram_posts(safe_get(profile, 'id'))
-        if not posts:
-            bot.reply_to(message, "No public posts found for this account.")
-            return
-            
-        bot.reply_to(message, f"📂 Found {len(posts)} recent posts. Downloading...")
-        
-        for post in posts:
-            try:
-                media_url = get_media_url(post)
-                if not media_url:
-                    continue
-                    
-                caption = format_post(post)
-                
-                if safe_get(post, 'media_type') == 2:  # Video
-                    bot.send_video(
-                        chat_id=message.chat.id,
-                        video=media_url,
-                        caption=caption,
-                        parse_mode='HTML'
-                    )
-                else:  # Photo or carousel
-                    bot.send_photo(
-                        chat_id=message.chat.id,
-                        photo=media_url,
-                        caption=caption,
-                        parse_mode='HTML'
-                    )
-                
-                time.sleep(2)  # Rate limit protection
-                
-            except Exception as e:
-                print(f"Error sending post: {e}")
-                continue
-                
     except Exception as e:
-        bot.reply_to(message, f"⚠️ Error processing @{user}: {str(e)}")
+        print(f"Error sending media: {e}")
+        # Fallback to sending as document
+        try:
+            bot.send_document(
+                chat_id=message.chat.id,
+                document=download_url,
+                caption="Here's your downloaded media!"
+            )
+        except Exception as e:
+            bot.reply_to(message, f"❌ Failed to send media: {str(e)}")
 
 if __name__ == '__main__':
     print("Bot is running...")
