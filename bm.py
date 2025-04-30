@@ -63,8 +63,8 @@ def handle_video(update: Update, context: CallbackContext):
 
 # Main function to run the bot
 def main():
-    # Create the Updater object and pass the bot token
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
+    # Create the Updater object
+    updater = Updater(TELEGRAM_TOKEN)
     
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
@@ -73,7 +73,7 @@ def main():
     dispatcher.add_handler(CommandHandler('start', start))
     
     # Add message handler for videos
-    dispatcher.add_handler(MessageHandler(filters.VIDEO, handle_video))  # Note lowercase filters
+    dispatcher.add_handler(MessageHandler(filters.VIDEO, handle_video))
     
     # Start polling for updates
     updater.start_polling()
