@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 # GitHub & Telegram Config (⚠️ Remove tokens before sharing code!)
-GITHUB_TOKEN = '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'  # ⚠️ REVOKED! Replace with new token
+GITHUB_TOKEN = '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'  # ⚠️ REVOKED! Replace with new token
 GITHUB_REPO = 'seedhe-maut-2/ng'
 GITHUB_API_URL = f'https://api.github.com/repos/{GITHUB_REPO}/contents/'
 TELEGRAM_TOKEN = '7714765260:AAG4yiN5_ow25-feUeKslR2xsdeMFuPllGg'  # ⚠️ REPLACE!
