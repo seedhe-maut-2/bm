@@ -2,7 +2,8 @@ import os
 import requests
 import base64
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext
+from telegram.ext import filters  # Note: lowercase 'filters' in newer versions
 
 # Your GitHub Token and repository details
 GITHUB_TOKEN = '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'  # Replace with your GitHub token
@@ -44,7 +45,6 @@ def start(update: Update, context: CallbackContext):
 def handle_video(update: Update, context: CallbackContext):
     # Get the video file
     video_file = update.message.video.get_file()
-    video_file_path = video_file.file_path
     file_name = f"{update.message.video.file_id}.mp4"
 
     # Download the video file
@@ -63,7 +63,7 @@ def handle_video(update: Update, context: CallbackContext):
 # Main function to run the bot
 def main():
     # Create the Updater object
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
+    updater = Updater(TELEGRAM_TOKEN)
     
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
@@ -72,7 +72,7 @@ def main():
     dispatcher.add_handler(CommandHandler('start', start))
     
     # Add message handler for videos
-    dispatcher.add_handler(MessageHandler(Filters.video, handle_video))
+    dispatcher.add_handler(MessageHandler(filters.VIDEO, handle_video))
     
     # Start polling for updates
     updater.start_polling()
