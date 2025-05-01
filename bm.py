@@ -1,30 +1,31 @@
 from telegram import Update
-from telegram.ext import Updater, MessageHandler, CallbackContext
-from telegram.ext import filters  # Note: lowercase 'filters'
+from telegram.ext import Application, MessageHandler, ContextTypes
+from telegram.ext import filters
 
 # Replace this with your bot token
 BOT_TOKEN = '8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A'
 
-def get_direct_link(update: Update, context: CallbackContext):
-    file = update.message.video or update.message.photo[-1] or update.message.document
+async def get_direct_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = update.message.video or update.message.photo[-1] if update.message.photo else update.message.document
 
     if file:
-        file_info = file.get_file()
+        file_info = await file.get_file()
         direct_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-
-        update.message.reply_text(f"✅ Direct link:\n{direct_link}")
+        await update.message.reply_text(f"✅ Direct link:\n{direct_link}")
     else:
-        update.message.reply_text("❌ Please send a photo, video, or document.")
+        await update.message.reply_text("❌ Please send a photo, video, or document.")
 
-def main():
-    updater = Updater(BOT_TOKEN)
-    dp = updater.dispatcher
+async def main():
+    # Create the Application
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    dp.add_handler(MessageHandler(filters.ALL, get_direct_link))  # Note: filters.ALL
+    # Add handler
+    application.add_handler(MessageHandler(filters.ALL, get_direct_link))
 
-    updater.start_polling()
+    # Start the bot
     print("Bot is running...")
-    updater.idle()
+    await application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
