@@ -20,7 +20,6 @@ async def get_direct_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Create the direct download link
-    # The correct format for Telegram file link: https://api.telegram.org/file/bot<token>/<file_path>
     file_path = file.file_path  # The file_path provided by Telegram's file API
     direct_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
     
@@ -33,12 +32,12 @@ def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Add handlers for different media types
-    application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.DOCUMENT, get_direct_link))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, get_direct_link))
     
     # Handler for non-media messages
     async def wrong_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please send a photo, video, or document.")
-    application.add_handler(MessageHandler(filters.ALL & ~(filters.PHOTO | filters.VIDEO | filters.DOCUMENT), wrong_format))
+    application.add_handler(MessageHandler(filters.ALL & ~(filters.PHOTO | filters.VIDEO | filters.Document.ALL), wrong_format))
 
     # Run the bot
     print("Bot is running...")
