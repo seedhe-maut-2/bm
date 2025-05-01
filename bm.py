@@ -12,7 +12,7 @@ from pytgcalls.types.input_stream import InputAudioStream, InputVideoStream
 def install_dependencies():
     required_packages = {
         'python-telegram-bot': '20.0',
-        'pytgcalls': '',
+        'pytgcalls': '3.0.0',  # Specify version to avoid conflicts
         'ffmpeg-python': ''
     }
     
@@ -23,14 +23,18 @@ def install_dependencies():
             print(f"✅ {package} already installed")
         except ImportError:
             print(f"⚠️ Installing {package}...")
-            install_cmd = [sys.executable, "-m", "pip", "install", f"{package}{'=='+version if version else ''}"]
-            subprocess.check_call(install_cmd, stdout=subprocess.DEVNULL)
+            try:
+                install_cmd = [sys.executable, "-m", "pip", "install", f"{package}{'=='+version if version else ''}"]
+                subprocess.check_call(install_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError as e:
+                print(f"❌ Failed to install {package}: {e}")
+                sys.exit(1)
 
 install_dependencies()
 
 # ---- Configuration ----
-BOT_TOKEN = "7694836384:AAE0OoYLmz1USms_ORy3Wbj1MTecQ5119Io"  # Replace with your bot token
-CHANNEL_ID = -1002577781115   # Replace with your channel ID (must be negative)
+BOT_TOKEN = "7694836384:AAE0OoYLmz1USms_ORy3Wbj1MTecQ5119Io"
+CHANNEL_ID = -1002577781115
 STREAM_URL = "https://starsporthindii.pages.dev/index.m3u8"
 
 # ---- Optimized Stream Parameters ----
@@ -71,7 +75,7 @@ class StreamManager:
         while retry_count < max_retries:
             try:
                 if self.is_streaming:
-                    await pytgcalls.leave_group_call(CHANNEL_ID)
+                    await self.stop_stream()
                 
                 await pytgcalls.join_group_call(
                     CHANNEL_ID,
@@ -97,8 +101,9 @@ class StreamManager:
 
     async def stop_stream(self):
         try:
-            await pytgcalls.leave_group_call(CHANNEL_ID)
-            self.is_streaming = False
+            if self.is_streaming:
+                await pytgcalls.leave_group_call(CHANNEL_ID)
+                self.is_streaming = False
             return True
         except Exception as e:
             print(f"Error stopping stream: {str(e)}")
@@ -112,14 +117,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await manager.start_stream(STREAM_CONFIG["max_retries"]):
         await update.message.reply_text("🎥 Stream started with HD quality!")
     else:
-        await update.message.reply_text("❌ Failed to start stream after multiple attempts")
+        await update.message.reply_text("❌ Failed to start stream after multiple attempts. Please try again later.")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
     if await manager.stop_stream():
         await update.message.reply_text("⏹ Stream stopped successfully!")
     else:
-        await update.message.reply_text("⚠️ Error stopping stream (may have already stopped)")
+        await update.message.reply_text("⚠️ Error stopping stream. It may have already stopped.")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
@@ -136,32 +141,37 @@ def main():
     # Check FFmpeg installation
     try:
         subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except:
-        print("❌ FFmpeg not installed! Please install FFmpeg first.")
-        print("On Ubuntu/Debian: sudo apt install ffmpeg")
-        print("On Mac: brew install ffmpeg")
-        print("On Windows: Download from https://ffmpeg.org")
-        return
+    except Exception as e:
+        print("❌ FFmpeg not installed or not in PATH!")
+        print("Install FFmpeg first:")
+        print("Ubuntu/Debian: sudo apt install ffmpeg")
+        print("Mac: brew install ffmpeg")
+        print("Windows: Download from https://ffmpeg.org")
+        sys.exit(1)
 
-    # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stop", stop))
-    application.add_handler(CommandHandler("status", status))
-    
-    # Start PyTgCalls
-    pytgcalls.start()
-    
-    print("🤖 Bot is running...")
-    print(f"🔗 Stream URL: {STREAM_URL}")
-    print("Available commands:")
-    print("/start - Start the stream")
-    print("/stop - Stop the stream")
-    print("/status - Check stream status")
-    
-    application.run_polling()
+    try:
+        # Create application
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("stop", stop))
+        application.add_handler(CommandHandler("status", status))
+        
+        # Start PyTgCalls
+        pytgcalls.start()
+        
+        print("🤖 Bot is running...")
+        print(f"🔗 Stream URL: {STREAM_URL}")
+        print("Available commands:")
+        print("/start - Start the stream")
+        print("/stop - Stop the stream")
+        print("/status - Check stream status")
+        
+        application.run_polling()
+    except Exception as e:
+        print(f"❌ Bot crashed: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
