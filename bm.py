@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import asyncio
 from telegram import Update
@@ -18,6 +19,32 @@ STREAM_SETTINGS = {
     "preset": "fast"
 }
 
+def install_ffmpeg():
+    """Automatically install FFmpeg based on the operating system"""
+    try:
+        # Check if FFmpeg is already installed
+        subprocess.run(["ffmpeg", "-version"], check=True, 
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except:
+        print("🔄 FFmpeg not found. Attempting to install...")
+        try:
+            if sys.platform == "linux":
+                # For Ubuntu/Debian
+                subprocess.run(["sudo", "apt", "update"], check=True)
+                subprocess.run(["sudo", "apt", "install", "-y", "ffmpeg"], check=True)
+            elif sys.platform == "darwin":
+                # For MacOS
+                subprocess.run(["brew", "install", "ffmpeg"], check=True)
+            elif sys.platform == "win32":
+                # For Windows
+                print("Please download FFmpeg from https://ffmpeg.org and add it to PATH")
+                return False
+            return True
+        except Exception as e:
+            print(f"❌ Failed to install FFmpeg: {e}")
+            return False
+
 class StreamManager:
     def __init__(self):
         self.process = None
@@ -30,6 +57,7 @@ class StreamManager:
         try:
             ffmpeg_cmd = [
                 "ffmpeg",
+                "-re",  # Read input at native frame rate
                 "-i", STREAM_URL,
                 "-vf", f"scale={STREAM_SETTINGS['video_size']},fps={STREAM_SETTINGS['framerate']}",
                 "-c:v", "libx264",
@@ -38,7 +66,7 @@ class StreamManager:
                 "-c:a", "aac",
                 "-b:a", STREAM_SETTINGS["audio_bitrate"],
                 "-f", "flv",
-                "rtmps://live.restream.io/live/YOUR_STREAM_KEY"  # Replace with your RTMP endpoint
+                "rtmps://live.restream.io/live/YOUR_STREAM_KEY"  # Replace with your endpoint
             ]
             
             self.process = subprocess.Popen(
@@ -57,9 +85,12 @@ class StreamManager:
         if self.process and self.is_streaming:
             try:
                 self.process.terminate()
-                self.process.wait(timeout=5)
-            except:
-                self.process.kill()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+            except Exception as e:
+                print(f"Error stopping stream: {e}")
             finally:
                 self.process = None
                 self.is_streaming = False
@@ -67,11 +98,15 @@ class StreamManager:
 
 # Telegram Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not install_ffmpeg():
+        await update.message.reply_text("❌ FFmpeg installation required. Please install FFmpeg first.")
+        return
+        
     manager = StreamManager()
     if await manager.start_stream():
         await update.message.reply_text("🎥 Stream started successfully!")
     else:
-        await update.message.reply_text("❌ Failed to start stream")
+        await update.message.reply_text("❌ Failed to start stream. Check logs for details.")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
@@ -84,20 +119,15 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
     status_text = "🟢 LIVE" if manager.is_streaming else "🔴 OFFLINE"
     await update.message.reply_text(
-        f"Stream Status: {status_text}\n"
-        f"Quality: {STREAM_SETTINGS['video_size']}@{STREAM_SETTINGS['framerate']}fps\n"
-        f"Source: {STREAM_URL}"
+        f"📺 Stream Status: {status_text}\n"
+        f"⚙️ Quality: {STREAM_SETTINGS['video_size']}@{STREAM_SETTINGS['framerate']}fps\n"
+        f"🔗 Source: {STREAM_URL}"
     )
 
 def main():
-    # Check FFmpeg installation
-    try:
-        subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except:
-        print("❌ FFmpeg not installed! Please install FFmpeg first.")
-        print("Ubuntu/Debian: sudo apt install ffmpeg")
-        print("Mac: brew install ffmpeg")
-        print("Windows: Download from https://ffmpeg.org")
+    # Check Python version
+    if sys.version_info < (3, 7):
+        print("❌ Python 3.7 or higher required")
         return
 
     # Create application
