@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 # Configuration
 BOT_TOKEN = "7694836384:AAE0OoYLmz1USms_ORy3Wbj1MTecQ5119Io"
-CHANNEL_ID = -1002577781115
+CHANNEL_ID = -1002577781115  # Your channel ID (must be negative)
 STREAM_URL = "https://starsporthindii.pages.dev/index.m3u8"
 
 # Stream quality settings
@@ -19,31 +19,33 @@ STREAM_SETTINGS = {
     "preset": "fast"
 }
 
-def install_ffmpeg():
-    """Automatically install FFmpeg based on the operating system"""
+def check_dependencies():
+    """Check and install required dependencies"""
     try:
-        # Check if FFmpeg is already installed
+        import python_telegram_bot
+    except ImportError:
+        print("Installing python-telegram-bot...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "python-telegram-bot==20.0"], check=True)
+    
+    # FFmpeg check
+    try:
         subprocess.run(["ffmpeg", "-version"], check=True, 
                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
     except:
-        print("🔄 FFmpeg not found. Attempting to install...")
+        print("FFmpeg not found. Attempting to install...")
         try:
             if sys.platform == "linux":
-                # For Ubuntu/Debian
                 subprocess.run(["sudo", "apt", "update"], check=True)
                 subprocess.run(["sudo", "apt", "install", "-y", "ffmpeg"], check=True)
             elif sys.platform == "darwin":
-                # For MacOS
                 subprocess.run(["brew", "install", "ffmpeg"], check=True)
-            elif sys.platform == "win32":
-                # For Windows
-                print("Please download FFmpeg from https://ffmpeg.org and add it to PATH")
+            else:
+                print("Please install FFmpeg manually on Windows")
                 return False
-            return True
         except Exception as e:
-            print(f"❌ Failed to install FFmpeg: {e}")
+            print(f"Failed to install FFmpeg: {e}")
             return False
+    return True
 
 class StreamManager:
     def __init__(self):
@@ -57,7 +59,7 @@ class StreamManager:
         try:
             ffmpeg_cmd = [
                 "ffmpeg",
-                "-re",  # Read input at native frame rate
+                "-re",  # Real-time streaming
                 "-i", STREAM_URL,
                 "-vf", f"scale={STREAM_SETTINGS['video_size']},fps={STREAM_SETTINGS['framerate']}",
                 "-c:v", "libx264",
@@ -65,15 +67,16 @@ class StreamManager:
                 "-preset", STREAM_SETTINGS["preset"],
                 "-c:a", "aac",
                 "-b:a", STREAM_SETTINGS["audio_bitrate"],
-                "-f", "flv",
-                "rtmps://live.restream.io/live/YOUR_STREAM_KEY"  # Replace with your endpoint
+                "-f", "mpegts",  # MPEG-TS format works best with Telegram
+                "pipe:1"  # Output to stdout
             ]
             
+            # Start FFmpeg process
             self.process = subprocess.Popen(
                 ffmpeg_cmd,
-                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                bufsize=10**8  # Large buffer for smooth streaming
             )
             self.is_streaming = True
             return True
@@ -98,15 +101,33 @@ class StreamManager:
 
 # Telegram Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not install_ffmpeg():
-        await update.message.reply_text("❌ FFmpeg installation required. Please install FFmpeg first.")
+    if not check_dependencies():
+        await update.message.reply_text("❌ Required dependencies not installed")
         return
         
     manager = StreamManager()
     if await manager.start_stream():
-        await update.message.reply_text("🎥 Stream started successfully!")
+        # Send the stream to Telegram
+        try:
+            with open('stream.ts', 'wb') as f:
+                while manager.is_streaming and manager.process.poll() is None:
+                    data = manager.process.stdout.read(1024)
+                    if not data:
+                        break
+                    f.write(data)
+            
+            await context.bot.send_video(
+                chat_id=CHANNEL_ID,
+                video=open('stream.ts', 'rb'),
+                supports_streaming=True,
+                timeout=9999
+            )
+            await update.message.reply_text("🎥 Stream started successfully!")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Streaming error: {e}")
+            await manager.stop_stream()
     else:
-        await update.message.reply_text("❌ Failed to start stream. Check logs for details.")
+        await update.message.reply_text("❌ Failed to start stream")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
@@ -120,26 +141,21 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = "🟢 LIVE" if manager.is_streaming else "🔴 OFFLINE"
     await update.message.reply_text(
         f"📺 Stream Status: {status_text}\n"
-        f"⚙️ Quality: {STREAM_SETTINGS['video_size']}@{STREAM_SETTINGS['framerate']}fps\n"
-        f"🔗 Source: {STREAM_URL}"
+        f"⚙️ Quality: {STREAM_SETTINGS['video_size']}@{STREAM_SETTINGS['framerate']}fps"
     )
 
 def main():
-    # Check Python version
-    if sys.version_info < (3, 7):
-        print("❌ Python 3.7 or higher required")
+    if not check_dependencies():
+        print("❌ Required dependencies not installed")
         return
 
-    # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("status", status))
     
     print("🤖 Bot is running...")
-    print("Available commands: /start, /stop, /status")
     application.run_polling()
 
 if __name__ == "__main__":
