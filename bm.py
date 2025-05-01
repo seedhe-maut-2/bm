@@ -1,177 +1,116 @@
 import os
-import sys
 import subprocess
 import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream
-from pytgcalls.types.input_stream import InputAudioStream, InputVideoStream
 
-# ---- Auto Dependency Installer ----
-def install_dependencies():
-    required_packages = {
-        'python-telegram-bot': '20.0',
-        'pytgcalls': '3.0.0',  # Specify version to avoid conflicts
-        'ffmpeg-python': ''
-    }
-    
-    print("🔍 Checking dependencies...")
-    for package, version in required_packages.items():
-        try:
-            __import__(package.split('==')[0])
-            print(f"✅ {package} already installed")
-        except ImportError:
-            print(f"⚠️ Installing {package}...")
-            try:
-                install_cmd = [sys.executable, "-m", "pip", "install", f"{package}{'=='+version if version else ''}"]
-                subprocess.check_call(install_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except subprocess.CalledProcessError as e:
-                print(f"❌ Failed to install {package}: {e}")
-                sys.exit(1)
-
-install_dependencies()
-
-# ---- Configuration ----
+# Configuration
 BOT_TOKEN = "7694836384:AAE0OoYLmz1USms_ORy3Wbj1MTecQ5119Io"
 CHANNEL_ID = -1002577781115
 STREAM_URL = "https://starsporthindii.pages.dev/index.m3u8"
 
-# ---- Optimized Stream Parameters ----
-STREAM_CONFIG = {
-    "video": InputVideoStream(
-        fps=30,
-        resolution=(1280, 720),
-        bitrate=2500000,
-        minimum_fps=25,
-        maximum_fps=30
-    ),
-    "audio": InputAudioStream(
-        bitrate=128000,
-        sample_rate=48000,
-        channels=2
-    ),
-    "buffer_time": 5,
-    "timeout": 30,
-    "reconnect_delay": 5,
-    "max_retries": 3
+# Stream quality settings
+STREAM_SETTINGS = {
+    "video_size": "1280x720",
+    "framerate": 30,
+    "video_bitrate": "2500k",
+    "audio_bitrate": "128k",
+    "preset": "fast"
 }
 
-# ---- Initialize PyTgCalls ----
-pytgcalls = PyTgCalls()
-
-# ---- Stream Management ----
 class StreamManager:
-    _instance = None
-    is_streaming = False
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    async def start_stream(self, max_retries=3):
-        retry_count = 0
-        while retry_count < max_retries:
-            try:
-                if self.is_streaming:
-                    await self.stop_stream()
-                
-                await pytgcalls.join_group_call(
-                    CHANNEL_ID,
-                    MediaStream(
-                        STREAM_URL,
-                        video_parameters=STREAM_CONFIG["video"],
-                        audio_parameters=STREAM_CONFIG["audio"],
-                        buffer_time=STREAM_CONFIG["buffer_time"],
-                        timeout=STREAM_CONFIG["timeout"],
-                        reconnect_delay=STREAM_CONFIG["reconnect_delay"]
-                    ),
-                )
-                self.is_streaming = True
-                return True
-            except Exception as e:
-                retry_count += 1
-                print(f"Attempt {retry_count} failed: {str(e)}")
-                if retry_count < max_retries:
-                    await asyncio.sleep(5)
-        
+    def __init__(self):
+        self.process = None
         self.is_streaming = False
-        return False
 
-    async def stop_stream(self):
+    async def start_stream(self):
+        if self.is_streaming:
+            return True
+
         try:
-            if self.is_streaming:
-                await pytgcalls.leave_group_call(CHANNEL_ID)
-                self.is_streaming = False
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-i", STREAM_URL,
+                "-vf", f"scale={STREAM_SETTINGS['video_size']},fps={STREAM_SETTINGS['framerate']}",
+                "-c:v", "libx264",
+                "-b:v", STREAM_SETTINGS["video_bitrate"],
+                "-preset", STREAM_SETTINGS["preset"],
+                "-c:a", "aac",
+                "-b:a", STREAM_SETTINGS["audio_bitrate"],
+                "-f", "flv",
+                "rtmps://live.restream.io/live/YOUR_STREAM_KEY"  # Replace with your RTMP endpoint
+            ]
+            
+            self.process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            self.is_streaming = True
             return True
         except Exception as e:
-            print(f"Error stopping stream: {str(e)}")
+            print(f"Stream start error: {e}")
             return False
 
-# ---- Telegram Handlers ----
+    async def stop_stream(self):
+        if self.process and self.is_streaming:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except:
+                self.process.kill()
+            finally:
+                self.process = None
+                self.is_streaming = False
+        return True
+
+# Telegram Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
-    await update.message.reply_text("🔄 Starting high-quality stable stream...")
-    
-    if await manager.start_stream(STREAM_CONFIG["max_retries"]):
-        await update.message.reply_text("🎥 Stream started with HD quality!")
+    if await manager.start_stream():
+        await update.message.reply_text("🎥 Stream started successfully!")
     else:
-        await update.message.reply_text("❌ Failed to start stream after multiple attempts. Please try again later.")
+        await update.message.reply_text("❌ Failed to start stream")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
     if await manager.stop_stream():
         await update.message.reply_text("⏹ Stream stopped successfully!")
     else:
-        await update.message.reply_text("⚠️ Error stopping stream. It may have already stopped.")
+        await update.message.reply_text("⚠️ No active stream to stop")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = StreamManager()
-    status_text = "🟢 LIVE now!" if manager.is_streaming else "🔴 Offline"
-    quality = f"{STREAM_CONFIG['video'].resolution[0]}p@{STREAM_CONFIG['video'].fps}fps"
+    status_text = "🟢 LIVE" if manager.is_streaming else "🔴 OFFLINE"
     await update.message.reply_text(
-        f"📊 Stream Status: {status_text}\n"
-        f"🎚 Quality: {quality}\n"
-        f"🔗 Source: {STREAM_URL}"
+        f"Stream Status: {status_text}\n"
+        f"Quality: {STREAM_SETTINGS['video_size']}@{STREAM_SETTINGS['framerate']}fps\n"
+        f"Source: {STREAM_URL}"
     )
 
-# ---- Main Application ----
 def main():
     # Check FFmpeg installation
     try:
         subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except Exception as e:
-        print("❌ FFmpeg not installed or not in PATH!")
-        print("Install FFmpeg first:")
+    except:
+        print("❌ FFmpeg not installed! Please install FFmpeg first.")
         print("Ubuntu/Debian: sudo apt install ffmpeg")
         print("Mac: brew install ffmpeg")
         print("Windows: Download from https://ffmpeg.org")
-        sys.exit(1)
+        return
 
-    try:
-        # Create application
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Add handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("stop", stop))
-        application.add_handler(CommandHandler("status", status))
-        
-        # Start PyTgCalls
-        pytgcalls.start()
-        
-        print("🤖 Bot is running...")
-        print(f"🔗 Stream URL: {STREAM_URL}")
-        print("Available commands:")
-        print("/start - Start the stream")
-        print("/stop - Stop the stream")
-        print("/status - Check stream status")
-        
-        application.run_polling()
-    except Exception as e:
-        print(f"❌ Bot crashed: {str(e)}")
-        sys.exit(1)
+    # Create application
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("stop", stop))
+    application.add_handler(CommandHandler("status", status))
+    
+    print("🤖 Bot is running...")
+    print("Available commands: /start, /stop, /status")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
