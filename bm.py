@@ -2,34 +2,45 @@ import asyncio
 from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
-# Your bot token
+# Your bot token (consider using environment variables instead)
 BOT_TOKEN = '8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A'
 
 async def get_direct_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Determine the file type
-    file = (update.message.video or 
-            update.message.photo[-1] if update.message.photo else 
-            update.message.document)
-
-    if file:
-        file_info = await file.get_file()
-        direct_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-        await update.message.reply_text(f"✅ Direct link:\n{direct_link}")
+    if update.message.photo:
+        # For photos, we take the highest resolution version (last in the array)
+        file = await update.message.photo[-1].get_file()
+    elif update.message.video:
+        # For videos
+        file = await update.message.video.get_file()
+    elif update.message.document:
+        # For documents
+        file = await update.message.document.get_file()
     else:
         await update.message.reply_text("❌ Please send a photo, video, or document.")
+        return
+
+    # Create the direct download link
+    direct_link = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+    
+    # Send the clean download link
+    await update.message.reply_text(f"✅ Direct download link:\n{direct_link}")
 
 def main():
     """Run the bot."""
-    # Create the Application and pass it your bot's token.
+    # Create the Application
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Add handler
-    application.add_handler(MessageHandler(filters.ALL, get_direct_link))
+    # Add handlers for different media types
+    application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, get_direct_link))
+    
+    # Handler for non-media messages
+    async def wrong_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("❌ Please send a photo, video, or document.")
+    application.add_handler(MessageHandler(filters.ALL & ~(filters.PHOTO | filters.VIDEO | filters.Document.ALL), wrong_format))
 
-    # Run the bot until the user presses Ctrl-C
+    # Run the bot
     print("Bot is running...")
     application.run_polling()
 
 if __name__ == '__main__':
-    # Use this simpler approach that works with the current PTB version
     main()
