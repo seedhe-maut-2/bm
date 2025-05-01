@@ -1,5 +1,6 @@
 from telegram import Update
-from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, MessageHandler, CallbackContext
+from telegram.ext import filters  # Note: lowercase 'filters'
 
 # Replace this with your bot token
 BOT_TOKEN = '8078721946:AAEhV6r0kXnmVaaFnRJgOk__pVjXU1mUd7A'
@@ -19,7 +20,7 @@ def main():
     updater = Updater(BOT_TOKEN)
     dp = updater.dispatcher
 
-    dp.add_handler(MessageHandler(Filters.all, get_direct_link))
+    dp.add_handler(MessageHandler(filters.ALL, get_direct_link))  # Note: filters.ALL
 
     updater.start_polling()
     print("Bot is running...")
