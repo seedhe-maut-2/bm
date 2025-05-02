@@ -8,6 +8,14 @@ import time
 from collections import deque
 import aiofiles
 import aiohttp
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Force install required packages with --break-system-packages
 required = ['telethon', 'tqdm', 'aiofiles', 'aiohttp']
@@ -15,12 +23,12 @@ for pkg in required:
     try:
         __import__(pkg)
     except ImportError:
-        print(f"Force installing {pkg} with --break-system-packages...")
+        logger.info(f"Installing {pkg}...")
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", pkg])
         except subprocess.CalledProcessError:
-            print(f"Failed to install {pkg}, trying with sudo...")
-            subprocess.check_call(['sudo', sys.executable, "-m", "pip", "install", "--break-system-packages", pkg])
+            logger.error(f"Failed to install {pkg}")
+            sys.exit(1)
 
 from telethon.sync import TelegramClient, events
 from telethon.tl.types import Document, DocumentAttributeVideo
@@ -39,39 +47,52 @@ class Config:
         self.rtmp_url = 'rtmps://dc5-1.rtmp.t.me/s/2577781115:yTl41OgfjFRzupdXO1YLLQ'
         self.stream_process = None
         self.stream_start_time = None
-        self.download_chunk_size = 1024 * 1024  # 1MB chunks for faster downloads
-        self.max_parallel_downloads = 3  # Number of parallel downloads
-        self.video_storage = "videos"  # Directory to store videos
+        self.download_chunk_size = 1024 * 1024  # 1MB chunks
+        self.max_parallel_downloads = 3
+        self.video_storage = "videos"
         self.ffmpeg_preset = 'veryfast'
         self.stream_resolution = '1280:720'
         self.stream_bitrate = '3000k'
         self.stream_buffer = '6000k'
         
-        # Create video storage directory if not exists
         os.makedirs(self.video_storage, exist_ok=True)
 
 config = Config()
 
 # Initialize Telegram client
-client = TelegramClient(config.session_name, config.api_id, config.api_hash)
-bot = TelegramClient('bot', config.api_id, config.api_hash).start(bot_token=config.bot_token)
+try:
+    client = TelegramClient(config.session_name, config.api_id, config.api_hash)
+    bot = TelegramClient('bot', config.api_id, config.api_hash).start(bot_token=config.bot_token)
+    logger.info("Telegram clients initialized")
+except Exception as e:
+    logger.error(f"Failed to initialize Telegram clients: {e}")
+    sys.exit(1)
 
 async def download_file_part(session, url, start, end, filename):
     """Download a part of the file using aiohttp"""
     headers = {'Range': f'bytes={start}-{end}'}
-    async with session.get(url, headers=headers) as response:
-        async with aiofiles.open(filename, 'rb+') as f:
-            await f.seek(start)
-            async for chunk in response.content.iter_chunked(config.download_chunk_size):
-                await f.write(chunk)
+    try:
+        async with session.get(url, headers=headers) as response:
+            response.raise_for_status()
+            async with aiofiles.open(filename, 'rb+') as f:
+                await f.seek(start)
+                async for chunk in response.content.iter_chunked(config.download_chunk_size):
+                    await f.write(chunk)
+    except Exception as e:
+        logger.error(f"Error downloading part {start}-{end}: {e}")
+        raise
 
 async def parallel_download(file_path, file_size, download_url):
     """Download file in parallel chunks"""
     part_size = file_size // config.max_parallel_downloads
     
     # Create empty file of full size
-    async with aiofiles.open(file_path, 'wb') as f:
-        await f.truncate(file_size)
+    try:
+        async with aiofiles.open(file_path, 'wb') as f:
+            await f.truncate(file_size)
+    except Exception as e:
+        logger.error(f"Error creating file: {e}")
+        raise
     
     async with aiohttp.ClientSession() as session:
         tasks = []
@@ -85,59 +106,93 @@ async def parallel_download(file_path, file_size, download_url):
 async def download_video(channel_username, message_id):
     """Download video from Telegram message with parallel downloads"""
     try:
+        logger.info(f"Starting download from {channel_username} message {message_id}")
+        
+        # Verify channel access first
+        try:
+            channel_entity = await client.get_entity(channel_username)
+            logger.info(f"Channel verified: {channel_entity.title}")
+        except Exception as e:
+            logger.error(f"Channel access error: {e}")
+            return None
+            
         msg = await client.get_messages(channel_username, ids=message_id)
         
-        if msg and msg.media and isinstance(msg.media, Document):
-            # Get video attributes
-            video_attrs = [attr for attr in msg.document.attributes if isinstance(attr, DocumentAttributeVideo)]
-            if not video_attrs:
-                return None
-                
-            total_size = msg.document.size
-            progress_message = await bot.send_message(channel_username, f"⏳ Downloading video (size: {total_size/1024/1024:.2f} MB)...")
+        if not msg:
+            logger.error("Message not found")
+            return None
             
-            # Generate unique filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"video_{timestamp}_{message_id}.mp4"
-            file_path = os.path.join(config.video_storage, filename)
+        if not msg.media:
+            logger.error("Message has no media")
+            return None
             
-            # Get download URL
-            download_url = await client.download_media(msg.document, file=file_path, progress_callback=lambda c,t: None)
+        if not isinstance(msg.media, Document):
+            logger.error("Message media is not a document")
+            return None
             
-            # Download using parallel method
+        video_attrs = [attr for attr in msg.document.attributes if isinstance(attr, DocumentAttributeVideo)]
+        if not video_attrs:
+            logger.error("No video attributes found")
+            return None
+            
+        total_size = msg.document.size
+        logger.info(f"Video size: {total_size/1024/1024:.2f} MB")
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"video_{timestamp}_{message_id}.mp4"
+        file_path = os.path.join(config.video_storage, filename)
+        
+        # Get download URL
+        try:
+            download_url = await client.download_media(msg.document, file=file_path)
+            logger.info(f"Download URL obtained, starting parallel download")
+        except Exception as e:
+            logger.error(f"Error getting download URL: {e}")
+            return None
+            
+        # Download using parallel method
+        try:
             await parallel_download(file_path, total_size, download_url)
+            logger.info("Parallel download completed successfully")
+        except Exception as e:
+            logger.error(f"Parallel download failed: {e}")
+            try:
+                os.remove(file_path)
+            except:
+                pass
+            return None
             
-            # Add to video queue
-            video_info = {
-                'path': file_path,
-                'channel': channel_username,
-                'message_id': message_id,
-                'size': total_size,
-                'duration': video_attrs[0].duration if video_attrs else 0,
-                'timestamp': timestamp
-            }
-            config.video_queue.append(video_info)
-            config.current_video_index = len(config.video_queue) - 1
-            
-            await progress_message.edit(f"✅ Video downloaded successfully!\n\n📁 Path: `{file_path}`\n\nNow you can start stream with /startstream")
-            return file_path
-        return None
+        # Add to video queue
+        video_info = {
+            'path': file_path,
+            'channel': channel_username,
+            'message_id': message_id,
+            'size': total_size,
+            'duration': video_attrs[0].duration if video_attrs else 0,
+            'timestamp': timestamp
+        }
+        config.video_queue.append(video_info)
+        config.current_video_index = len(config.video_queue) - 1
+        
+        return file_path
+        
     except Exception as e:
-        print(f"Download error: {e}")
-        if 'progress_message' in locals():
-            await progress_message.edit(f"❌ Download failed: {str(e)}")
+        logger.error(f"Download error: {e}")
         return None
 
 async def start_stream(video_index=None):
-    """Start streaming the specified video (or current if None)"""
-    if not config.video_queue:
-        return False, "❌ No videos available. Please download first using /download."
-    
-    if video_index is None:
-        video_index = config.current_video_index
-    
+    """Start streaming the specified video"""
     try:
-        video_info = config.video_queue[video_index]
+        if not config.video_queue:
+            return False, "❌ No videos available. Please download first using /download."
+        
+        video_index = config.current_video_index if video_index is None else video_index
+        
+        try:
+            video_info = config.video_queue[video_index]
+        except IndexError:
+            return False, "❌ Invalid video index."
+            
         if not os.path.exists(video_info['path']):
             return False, "❌ Video file not found."
         
@@ -162,8 +217,8 @@ async def start_stream(video_index=None):
             config.rtmp_url
         ]
         
-        # Start process with error handling
         try:
+            logger.info(f"Starting FFmpeg stream: {' '.join(ffmpeg_command)}")
             config.stream_process = subprocess.Popen(
                 ffmpeg_command,
                 stdout=subprocess.PIPE,
@@ -174,35 +229,38 @@ async def start_stream(video_index=None):
             config.current_video_index = video_index
             return True, f"✅ Streaming: {os.path.basename(video_info['path'])}"
         except Exception as e:
+            logger.error(f"FFmpeg error: {e}")
             return False, f"❌ FFmpeg error: {str(e)}"
             
-    except IndexError:
-        return False, "❌ Invalid video index."
     except Exception as e:
+        logger.error(f"Stream error: {e}")
         return False, f"❌ Stream error: {str(e)}"
 
 async def stop_stream():
     """Stop the current stream"""
-    if config.stream_process:
-        try:
-            # Graceful shutdown
-            config.stream_process.terminate()
-            try:
-                config.stream_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                config.stream_process.kill()
+    try:
+        if not config.stream_process:
+            return False, "❌ No active stream to stop."
             
-            stream_duration = datetime.now() - config.stream_start_time if config.stream_start_time else None
-            message = "✅ Stream stopped."
-            if stream_duration:
-                message += f"\n⏱ Duration: {str(stream_duration).split('.')[0]}"
-            return True, message
-        except Exception as e:
-            return False, f"❌ Error stopping stream: {str(e)}"
-        finally:
-            config.stream_process = None
-            config.stream_start_time = None
-    return False, "❌ No active stream to stop."
+        logger.info("Stopping stream...")
+        config.stream_process.terminate()
+        try:
+            config.stream_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            config.stream_process.kill()
+        
+        stream_duration = datetime.now() - config.stream_start_time if config.stream_start_time else None
+        message = "✅ Stream stopped."
+        if stream_duration:
+            message += f"\n⏱ Duration: {str(stream_duration).split('.')[0]}"
+        
+        config.stream_process = None
+        config.stream_start_time = None
+        return True, message
+        
+    except Exception as e:
+        logger.error(f"Error stopping stream: {e}")
+        return False, f"❌ Error stopping stream: {str(e)}"
 
 def is_user_allowed(user_id):
     """Check if user is allowed to control the bot"""
@@ -211,16 +269,16 @@ def is_user_allowed(user_id):
 async def cleanup_videos():
     """Clean up old video files"""
     try:
-        # Keep only the last 5 videos
         while len(config.video_queue) > 5:
             old_video = config.video_queue.popleft()
             try:
                 if os.path.exists(old_video['path']):
                     os.remove(old_video['path'])
+                    logger.info(f"Cleaned up old video: {old_video['path']}")
             except Exception as e:
-                print(f"Error deleting file {old_video['path']}: {e}")
+                logger.error(f"Error deleting file {old_video['path']}: {e}")
     except Exception as e:
-        print(f"Cleanup error: {e}")
+        logger.error(f"Cleanup error: {e}")
 
 # Bot command handlers
 @bot.on(events.NewMessage(pattern='/start|/help'))
@@ -233,15 +291,15 @@ async def start_handler(event):
 🤖 **Enhanced Telegram Stream Bot** 🤖
 
 Available commands:
-- /download [channel] [message_id] - Download video (faster parallel download)
-- /startstream [index] - Start streaming specified or current video
+- /download [channel] [message_id] - Download video
+- /startstream [index] - Start streaming
 - /stopstream - Stop current stream
 - /listvideos - Show available videos
-- /playvideo [index] - Switch to and play specific video
-- /deletevideo [index] - Delete a video from storage
+- /playvideo [index] - Switch video
+- /deletevideo [index] - Delete video
 - /status - Show current status
 - /setrtmp [url] - Update RTMP URL
-- /settings - Configure stream parameters
+- /settings - Show settings
 - /help - Show this help
 """
     await event.reply(help_text)
@@ -260,10 +318,36 @@ async def download_handler(event):
     try:
         channel = args[1]
         message_id = int(args[2])
-        await download_video(channel, message_id)
-        await cleanup_videos()
+        
+        progress_msg = await event.reply(f"⏳ Starting download from {channel} (message {message_id})...")
+        
+        # Verify channel first
+        try:
+            entity = await client.get_entity(channel)
+            await progress_msg.edit(f"🔍 Found channel: {entity.title}\nStarting download...")
+        except Exception as e:
+            await progress_msg.edit(f"❌ Channel error: {str(e)}")
+            return
+            
+        file_path = await download_video(channel, message_id)
+        if file_path:
+            await progress_msg.edit(
+                f"✅ Download successful!\n"
+                f"📁 Path: `{file_path}`\n"
+                f"💾 Size: {os.path.getsize(file_path)/1024/1024:.2f} MB\n"
+                f"Now you can /startstream"
+            )
+            await cleanup_videos()
+        else:
+            await progress_msg.edit("❌ Download failed. Possible reasons:\n"
+                                  "1. Invalid message ID\n"
+                                  "2. No video in message\n"
+                                  "3. Access denied")
+    except ValueError:
+        await event.reply("❌ Message ID must be a number")
     except Exception as e:
-        await event.reply(f"❌ Error: {str(e)}")
+        logger.error(f"Download handler error: {e}")
+        await event.reply(f"❌ Unexpected error: {str(e)}")
 
 @bot.on(events.NewMessage(pattern='/startstream'))
 async def start_stream_handler(event):
@@ -359,7 +443,6 @@ async def delete_video_handler(event):
             await event.reply("❌ Invalid video index")
             return
         
-        # Can't delete currently playing video if streaming
         if (config.stream_process and config.stream_process.poll() is None and 
             video_index == config.current_video_index):
             await event.reply("❌ Can't delete currently streaming video. Stop stream first.")
@@ -371,7 +454,6 @@ async def delete_video_handler(event):
                 os.remove(video_to_delete['path'])
             del config.video_queue[video_index]
             
-            # Adjust current index if needed
             if config.current_video_index >= video_index:
                 config.current_video_index = max(0, config.current_video_index - 1)
             
@@ -444,32 +526,37 @@ To change settings, edit the config directly in the code.
 
 # Cleanup on exit
 async def cleanup():
+    logger.info("Cleaning up...")
     if config.stream_process:
         await stop_stream()
     
-    # Clean up all video files
     for video in config.video_queue:
         try:
             if os.path.exists(video['path']):
                 os.remove(video['path'])
+                logger.info(f"Deleted: {video['path']}")
         except Exception as e:
-            print(f"Error deleting {video['path']}: {e}")
+            logger.error(f"Error deleting {video['path']}: {e}")
 
 def signal_handler(sig, frame):
-    print("\nShutting down...")
+    logger.info("Received shutdown signal")
     asyncio.run(cleanup())
     sys.exit(0)
 
 # Main function
 async def main():
-    # Connect client
-    await client.start()
-    print("Client connected.")
-    
-    # Start bot
-    print("Bot started. Press Ctrl+C to stop.")
     signal.signal(signal.SIGINT, signal_handler)
-    await bot.run_until_disconnected()
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    logger.info("Starting bot...")
+    try:
+        await client.start()
+        logger.info("Client connected")
+        await bot.run_until_disconnected()
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+    finally:
+        await cleanup()
 
 if __name__ == '__main__':
-    client.loop.run_until_complete(main())
+    asyncio.run(main())
