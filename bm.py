@@ -22,7 +22,7 @@ session_name = 'stream_session'
 
 # Telegram message details
 channel_username = 'hvuvvivkvmbihlhivticutxcy'
-message_id = 19
+message_id = 20
 
 # RTMP stream URL
 rtmp_url = 'rtmps://dc5-1.rtmp.t.me/s/2577781115:yTl41OgfjFRzupdXO1YLLQ'
