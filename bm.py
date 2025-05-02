@@ -26,7 +26,7 @@ class Config:
         self.api_hash = 'f71778a6e1e102f33ccc4aee3b5cc697'  # Replace with your API Hash
         self.session_name = 'stream_bot_session'
         self.bot_token = '7710269508:AAGTZlpf_GBpwh2kILwUjzE6gys4EgdYmDk'  # Replace with your bot token
-        self.allowed_user_ids = [123456789]  # Replace with your user ID
+        self.allowed_user_ids = [8167507955]  # Replace with your user ID
         self.current_video_path = None
         self.current_message_id = None
         self.current_channel = None
