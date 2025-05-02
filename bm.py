@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Force install required packages with --break-system-packages
+# Force install required packages
 required = ['telethon', 'tqdm', 'aiofiles', 'aiohttp']
 for pkg in required:
     try:
@@ -25,29 +26,29 @@ for pkg in required:
     except ImportError:
         logger.info(f"Installing {pkg}...")
         try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", pkg])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
         except subprocess.CalledProcessError:
             logger.error(f"Failed to install {pkg}")
             sys.exit(1)
 
-from telethon.sync import TelegramClient, events
+from telethon import TelegramClient, events
 from telethon.tl.types import Document, DocumentAttributeVideo
 from tqdm import tqdm
 
 # Configuration
 class Config:
     def __init__(self):
-        self.api_id = 22625636  # Replace with your API ID
-        self.api_hash = 'f71778a6e1e102f33ccc4aee3b5cc697'  # Replace with your API Hash
+        self.api_id = 22625636
+        self.api_hash = 'f71778a6e1e102f33ccc4aee3b5cc697'
         self.session_name = 'stream_bot_session'
-        self.bot_token = '7710269508:AAGTZlpf_GBpwh2kILwUjzE6gys4EgdYmDk'  # Replace with your bot token
-        self.allowed_user_ids = [8167507955]  # Replace with your user ID
-        self.video_queue = deque(maxlen=10)  # Store up to 10 videos
+        self.bot_token = '7710269508:AAGTZlpf_GBpwh2kILwUjzE6gys4EgdYmDk'
+        self.allowed_user_ids = [8167507955]
+        self.video_queue = deque(maxlen=10)
         self.current_video_index = 0
         self.rtmp_url = 'rtmps://dc5-1.rtmp.t.me/s/2577781115:yTl41OgfjFRzupdXO1YLLQ'
         self.stream_process = None
         self.stream_start_time = None
-        self.download_chunk_size = 1024 * 1024  # 1MB chunks
+        self.download_chunk_size = 1024 * 1024
         self.max_parallel_downloads = 3
         self.video_storage = "videos"
         self.ffmpeg_preset = 'veryfast'
@@ -59,14 +60,9 @@ class Config:
 
 config = Config()
 
-# Initialize Telegram client
-try:
-    client = TelegramClient(config.session_name, config.api_id, config.api_hash)
-    bot = TelegramClient('bot', config.api_id, config.api_hash).start(bot_token=config.bot_token)
-    logger.info("Telegram clients initialized")
-except Exception as e:
-    logger.error(f"Failed to initialize Telegram clients: {e}")
-    sys.exit(1)
+# Global clients
+client = None
+bot = None
 
 async def download_file_part(session, url, start, end, filename):
     """Download a part of the file using aiohttp"""
@@ -524,8 +520,8 @@ To change settings, edit the config directly in the code.
 """
     await event.reply(settings_text)
 
-# Cleanup on exit
 async def cleanup():
+    """Cleanup resources"""
     logger.info("Cleaning up...")
     if config.stream_process:
         await stop_stream()
@@ -538,25 +534,61 @@ async def cleanup():
         except Exception as e:
             logger.error(f"Error deleting {video['path']}: {e}")
 
-def signal_handler(sig, frame):
-    logger.info("Received shutdown signal")
-    asyncio.run(cleanup())
-    sys.exit(0)
+async def shutdown(signal, loop):
+    """Cleanup tasks tied to the service's shutdown."""
+    logger.info(f"Received exit signal {signal.name}...")
+    await cleanup()
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    logger.info(f"Cancelling {len(tasks)} outstanding tasks")
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
 
-# Main function
 async def main():
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    global client, bot
     
-    logger.info("Starting bot...")
+    # Initialize clients
+    client = TelegramClient(config.session_name, config.api_id, config.api_hash)
+    bot = TelegramClient('bot', config.api_id, config.api_hash).start(bot_token=config.bot_token)
+    
+    # Set up signal handlers
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: asyncio.create_task(shutdown(s, loop))
+    
     try:
         await client.start()
         logger.info("Client connected")
+        
+        # Register event handlers
+        bot.add_event_handler(start_handler, events.NewMessage(pattern='/start|/help'))
+        bot.add_event_handler(download_handler, events.NewMessage(pattern='/download'))
+        bot.add_event_handler(start_stream_handler, events.NewMessage(pattern='/startstream'))
+        bot.add_event_handler(stop_stream_handler, events.NewMessage(pattern='/stopstream'))
+        bot.add_event_handler(list_videos_handler, events.NewMessage(pattern='/listvideos'))
+        bot.add_event_handler(play_video_handler, events.NewMessage(pattern='/playvideo'))
+        bot.add_event_handler(delete_video_handler, events.NewMessage(pattern='/deletevideo'))
+        bot.add_event_handler(status_handler, events.NewMessage(pattern='/status'))
+        bot.add_event_handler(set_rtmp_handler, events.NewMessage(pattern='/setrtmp'))
+        bot.add_event_handler(settings_handler, events.NewMessage(pattern='/settings'))
+        
+        logger.info("Bot started and ready")
         await bot.run_until_disconnected()
     except Exception as e:
         logger.error(f"Fatal error: {e}")
     finally:
         await cleanup()
+        await client.disconnect()
+        logger.info("Bot shutdown complete")
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+    finally:
+        logger.info("Bot exited")
