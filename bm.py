@@ -7,6 +7,9 @@ from datetime import datetime
 import shutil
 import math
 import time
+from telethon.sync import TelegramClient, events
+from telethon.tl.types import Document
+from tqdm import tqdm
 
 # Force install required packages
 required = ['telethon', 'tqdm']
@@ -17,17 +20,13 @@ for pkg in required:
         print(f"Installing {pkg}...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", pkg])
 
-from telethon.sync import TelegramClient, events
-from telethon.tl.types import Document
-from tqdm import tqdm
-
 class Config:
     def __init__(self):
         self.api_id = 22625636  # Replace with your API ID
         self.api_hash = 'f71778a6e1e102f33ccc4aee3b5cc697'  # Replace with your API Hash
         self.session_name = 'stream_bot_session'
         self.bot_token = '7710269508:AAGTZlpf_GBpwh2kILwUjzE6gys4EgdYmDk'  # Replace with your bot token
-        self.allowed_user_ids = [8167507955]  # Replace with your user ID
+        self.allowed_user_ids = [123456789]  # Replace with your user ID
         self.current_video_path = None
         self.current_message_id = None
         self.current_channel = None
@@ -88,49 +87,66 @@ async def progress_callback(current, total):
 def is_user_allowed(user_id):
     return user_id in config.allowed_user_ids
 
-# Core functions
 async def download_video(channel_username, message_id, event):
     try:
+        # Convert message_id to integer
+        try:
+            message_id = int(message_id)
+        except ValueError:
+            await event.reply("❌ Message ID must be a number")
+            return None
+
         msg = await client.get_messages(channel_username, ids=message_id)
         
-        if msg and msg.media:
-            total_size = msg.media.document.size if isinstance(msg.media, Document) else 0
-            global bar
-            bar = tqdm(total=total_size, unit='B', unit_scale=True, desc='Downloading')
+        if msg is None:
+            await event.reply("❌ Message not found. Check if the bot has access to the channel.")
+            return None
             
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"video_{timestamp}.mp4"
-            config.current_video_path = filename
-            
-            config.download_progress_message = await event.reply(
-                f"⏳ Starting download...\n"
-                f"📁 {filename}\n"
-                f"📦 Size: {format_size(total_size)}\n"
-                f"📊 0% (0/{format_size(total_size)})"
-            )
-            config.last_progress_update = time.time()
-            
-            file_path = await client.download_media(
-                msg.media, 
-                file=filename, 
-                progress_callback=progress_callback
-            )
-            bar.close()
-            
-            config.current_video_path = file_path
-            config.current_message_id = message_id
-            config.current_channel = channel_username
-            
-            await config.download_progress_message.edit(
-                f"✅ Download complete!\n"
-                f"📁 {os.path.basename(file_path)}\n"
-                f"📦 {format_size(os.path.getsize(file_path))}\n"
-                f"⏱ {bar.format_dict['elapsed']:.1f}s\n"
-                f"⚡ Avg: {format_size(bar.format_dict['rate'])}/s"
-            )
-            config.download_progress_message = None
-            return file_path
-        return None
+        if not msg.media:
+            await event.reply("❌ The specified message doesn't contain any media")
+            return None
+
+        if not isinstance(msg.media, Document):
+            await event.reply("❌ The media is not a downloadable file")
+            return None
+
+        total_size = msg.media.document.size
+        global bar
+        bar = tqdm(total=total_size, unit='B', unit_scale=True, desc='Downloading')
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"video_{timestamp}.mp4"
+        config.current_video_path = filename
+        
+        config.download_progress_message = await event.reply(
+            f"⏳ Starting download...\n"
+            f"📁 {filename}\n"
+            f"📦 Size: {format_size(total_size)}\n"
+            f"📊 0% (0/{format_size(total_size)})"
+        )
+        config.last_progress_update = time.time()
+        
+        file_path = await client.download_media(
+            msg.media, 
+            file=filename, 
+            progress_callback=progress_callback
+        )
+        bar.close()
+        
+        config.current_video_path = file_path
+        config.current_message_id = message_id
+        config.current_channel = channel_username
+        
+        await config.download_progress_message.edit(
+            f"✅ Download complete!\n"
+            f"📁 {os.path.basename(file_path)}\n"
+            f"📦 {format_size(os.path.getsize(file_path))}\n"
+            f"⏱ {bar.format_dict['elapsed']:.1f}s\n"
+            f"⚡ Avg: {format_size(bar.format_dict['rate'])}/s"
+        )
+        config.download_progress_message = None
+        return file_path
+
     except Exception as e:
         if config.download_progress_message:
             await config.download_progress_message.edit(f"❌ Download failed: {str(e)}")
@@ -214,7 +230,6 @@ async def delete_all_videos():
     
     return deleted_files, total_size
 
-# Bot command handlers
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
     if not is_user_allowed(event.sender_id):
@@ -222,7 +237,7 @@ async def start_handler(event):
         return
     
     help_text = """
-🤖 **Enhanced Telegram Stream Bot** 🤖
+🤖 **Telegram Stream Bot** 🤖
 
 📥 Video Commands:
 - /download [channel] [msg_id] - Download video
@@ -260,7 +275,7 @@ async def download_handler(event):
     
     try:
         channel = args[1]
-        message_id = int(args[2])
+        message_id = args[2]
         await download_video(channel, message_id, event)
     except Exception as e:
         await event.reply(f"❌ Error: {str(e)}")
@@ -383,7 +398,6 @@ async def storage_handler(event):
     )
     await event.reply(response)
 
-# Cleanup on exit
 async def cleanup():
     if config.stream_process:
         config.stream_process.terminate()
@@ -402,13 +416,9 @@ def signal_handler(sig, frame):
     asyncio.run(cleanup())
     sys.exit(0)
 
-# Main function
 async def main():
-    # Connect client
     await client.start()
     print("Client connected.")
-    
-    # Start bot
     print("Bot started. Press Ctrl+C to stop.")
     await bot.run_until_disconnected()
 
