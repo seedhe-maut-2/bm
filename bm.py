@@ -172,7 +172,7 @@ async def start_stream(video_index=None):
             )
             config.stream_start_time = datetime.now()
             config.current_video_index = video_index
-            return True, f"✅ Streaming: {os.path.basename(video_info['path']}"
+            return True, f"✅ Streaming: {os.path.basename(video_info['path'])}"
         except Exception as e:
             return False, f"❌ FFmpeg error: {str(e)}"
             
