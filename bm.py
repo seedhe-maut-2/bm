@@ -5,6 +5,7 @@ import asyncio
 import signal
 from datetime import datetime
 import time
+
 # Force install required packages with --break-system-packages
 required = ['telethon', 'tqdm']
 for pkg in required:
@@ -36,6 +37,7 @@ class Config:
         self.rtmp_url = 'rtmps://dc5-1.rtmp.t.me/s/2577781115:yTl41OgfjFRzupdXO1YLLQ'
         self.stream_process = None
         self.stream_start_time = None
+        self.stream_restart_flag = False
 
 config = Config()
 
@@ -82,17 +84,17 @@ async def download_video(channel_username, message_id):
 async def start_stream():
     """Start streaming the downloaded video smoothly with auto-restart and error logging."""
     if not config.current_video_path or not os.path.exists(config.current_video_path):
-        return False, "❌ Koi video file nahi mili. Pehle /download karo."
+        return False, "❌ No video file found. Use /download first."
 
     if config.stream_process and config.stream_process.poll() is None:
-        return False, "❌ Stream already chalu hai."
+        return False, "❌ Stream is already running."
 
     ffmpeg_command = [
         'ffmpeg',
         '-re',
         '-i', config.current_video_path,
         '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264',  # Agar GPU hai to 'h264_nvenc' kar do
+        '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
@@ -117,42 +119,89 @@ async def start_stream():
     ]
 
     try:
-        log_file = open("ffmpeg_log.txt", "w")
-
+        log_file = open("ffmpeg_log.txt", "a")
+        log_file.write(f"\n\n=== New Stream Started at {datetime.now()} ===\n")
+        
         config.stream_process = subprocess.Popen(
             ffmpeg_command,
             stdin=subprocess.PIPE,
             stdout=log_file,
             stderr=log_file,
-            bufsize=1
+            bufsize=1,
+            preexec_fn=os.setsid
         )
         config.stream_start_time = datetime.now()
+        config.stream_restart_flag = True
+        
+        # Start monitoring task
+        asyncio.create_task(monitor_stream())
+        
+        return True, "✅ Stream started successfully!"
+    except Exception as e:
+        return False, f"❌ Stream error: {e}"
 
-        # Auto-restart check loop (optional async logic can be added)
-        while True:
-            time.sleep(5)  # Har 5 second mein check
-            if config.stream_process.poll() is not None:
-                log_file.write("❌ FFmpeg crash ho gaya, dobara start kar rahe hain...\n")
+async def monitor_stream():
+    """Monitor the stream process and restart if needed"""
+    while config.stream_restart_flag and config.stream_process:
+        await asyncio.sleep(5)
+        if config.stream_process.poll() is not None:
+            print("Stream crashed, attempting to restart...")
+            log_file = open("ffmpeg_log.txt", "a")
+            log_file.write("\n!!! Stream crashed, restarting...\n")
+            
+            ffmpeg_command = [
+                'ffmpeg',
+                '-re',
+                '-i', config.current_video_path,
+                '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-tune', 'zerolatency',
+                '-profile:v', 'main',
+                '-level', '3.1',
+                '-b:v', '2500k',
+                '-maxrate', '2500k',
+                '-minrate', '2500k',
+                '-bufsize', '5000k',
+                '-pix_fmt', 'yuv420p',
+                '-g', '60',
+                '-keyint_min', '60',
+                '-x264opts', 'nal-hrd=cbr:force-cfr=1',
+                '-c:a', 'aac',
+                '-b:a', '160k',
+                '-ar', '48000',
+                '-ac', '2',
+                '-async', '1',
+                '-use_wallclock_as_timestamps', '1',
+                '-f', 'flv',
+                '-flvflags', 'no_duration_filesize',
+                config.rtmp_url
+            ]
+            
+            try:
                 config.stream_process = subprocess.Popen(
                     ffmpeg_command,
                     stdin=subprocess.PIPE,
                     stdout=log_file,
                     stderr=log_file,
-                    bufsize=1
+                    bufsize=1,
+                    preexec_fn=os.setsid
                 )
                 config.stream_start_time = datetime.now()
+                log_file.write("Stream restarted successfully\n")
+            except Exception as e:
+                log_file.write(f"Failed to restart stream: {e}\n")
+            finally:
+                log_file.close()
 
-        return True, "✅ Stream super smooth shuru ho gayi!"
-    except Exception as e:
-        return False, f"❌ Stream mein dikkat: {e}"
 async def stop_stream():
     """Stop the current stream"""
-    if config.stream_process:
-        config.stream_process.terminate()
-        try:
-            config.stream_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            config.stream_process.kill()
+    if not config.stream_process:
+        return False, "❌ No active stream to stop."
+    
+    try:
+        config.stream_restart_flag = False
+        os.killpg(os.getpgid(config.stream_process.pid), signal.SIGTERM)
         
         stream_duration = datetime.now() - config.stream_start_time if config.stream_start_time else None
         config.stream_process = None
@@ -162,7 +211,8 @@ async def stop_stream():
         if stream_duration:
             message += f"\n⏱ Duration: {str(stream_duration).split('.')[0]}"
         return True, message
-    return False, "❌ No active stream to stop."
+    except Exception as e:
+        return False, f"❌ Error stopping stream: {e}"
 
 def is_user_allowed(user_id):
     """Check if user is allowed to control the bot"""
@@ -303,11 +353,14 @@ async def help_handler(event):
 # Cleanup on exit
 async def cleanup():
     if config.stream_process:
-        config.stream_process.terminate()
         try:
-            config.stream_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            config.stream_process.kill()
+            os.killpg(os.getpgid(config.stream_process.pid), signal.SIGTERM)
+        except:
+            pass
+    if client.is_connected():
+        await client.disconnect()
+    if bot.is_connected():
+        await bot.disconnect()
 
 def signal_handler(sig, frame):
     print("\nShutting down...")
