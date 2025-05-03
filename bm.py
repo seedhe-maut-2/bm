@@ -94,14 +94,17 @@ async def start_stream():
             '-i', config.current_video_path,
             '-vf', 'scale=1280:720',
             '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-maxrate', '3000k',
-            '-bufsize', '6000k',
+            '-preset', 'ultrafast',  # Changed from 'veryfast' to 'ultrafast' for lower latency
+            '-tune', 'zerolatency',  # Added for streaming
+            '-x264-params', 'keyint=50:min-keyint=25',  # Added for better keyframe control
+            '-b:v', '2500k',  # Changed from maxrate to b:v for constant bitrate
+            '-bufsize', '5000k',
             '-pix_fmt', 'yuv420p',
             '-g', '50',
             '-c:a', 'aac',
-            '-b:a', '160k',
+            '-b:a', '128k',  # Reduced audio bitrate
             '-ar', '44100',
+            '-threads', '2',  # Added to limit CPU usage
             '-f', 'flv',
             config.rtmp_url
         ]
