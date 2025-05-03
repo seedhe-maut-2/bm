@@ -4,7 +4,7 @@ import sys
 import asyncio
 import signal
 from datetime import datetime
-
+import time
 # Force install required packages with --break-system-packages
 required = ['telethon', 'tqdm']
 for pkg in required:
@@ -80,55 +80,71 @@ async def download_video(channel_username, message_id):
         return None
 
 async def start_stream():
-    """Start streaming the downloaded video"""
+    """Start streaming the downloaded video smoothly with auto-restart and error logging."""
     if not config.current_video_path or not os.path.exists(config.current_video_path):
-        return False, "❌ No video file available. Please download first using /download."
-    
+        return False, "❌ Koi video file nahi mili. Pehle /download karo."
+
     if config.stream_process and config.stream_process.poll() is None:
-        return False, "❌ Stream is already running."
-    
+        return False, "❌ Stream already chalu hai."
+
+    ffmpeg_command = [
+        'ffmpeg',
+        '-re',
+        '-i', config.current_video_path,
+        '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264',  # Agar GPU hai to 'h264_nvenc' kar do
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-profile:v', 'main',
+        '-level', '3.1',
+        '-b:v', '2500k',
+        '-maxrate', '2500k',
+        '-minrate', '2500k',
+        '-bufsize', '5000k',
+        '-pix_fmt', 'yuv420p',
+        '-g', '60',
+        '-keyint_min', '60',
+        '-x264opts', 'nal-hrd=cbr:force-cfr=1',
+        '-c:a', 'aac',
+        '-b:a', '160k',
+        '-ar', '48000',
+        '-ac', '2',
+        '-async', '1',
+        '-use_wallclock_as_timestamps', '1',
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        config.rtmp_url
+    ]
+
     try:
-        ffmpeg_command = [
-            'ffmpeg',
-            '-re',
-            '-i', config.current_video_path,
-            '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-            '-c:v', 'libx264',
-            '-preset', 'superfast',
-            '-tune', 'zerolatency',
-            '-profile:v', 'main',
-            '-level', '3.1',
-            '-b:v', '2500k',
-            '-maxrate', '2500k',
-            '-minrate', '2500k',
-            '-bufsize', '5000k',
-            '-pix_fmt', 'yuv420p',
-            '-g', '60',
-            '-keyint_min', '60',
-            '-x264opts', 'nal-hrd=cbr:force-cfr=1',
-            '-c:a', 'aac',
-            '-b:a', '160k',
-            '-ar', '48000',
-            '-ac', '2',
-            '-f', 'flv',
-            '-flvflags', 'no_duration_filesize',
-            '-strict', 'experimental',
-            config.rtmp_url
-        ]
-        
+        log_file = open("ffmpeg_log.txt", "w")
+
         config.stream_process = subprocess.Popen(
             ffmpeg_command,
             stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
+            stdout=log_file,
+            stderr=log_file,
             bufsize=1
         )
         config.stream_start_time = datetime.now()
-        return True, "✅ Stream started successfully!"
-    except Exception as e:
-        return False, f"❌ Stream error: {e}"
 
+        # Auto-restart check loop (optional async logic can be added)
+        while True:
+            time.sleep(5)  # Har 5 second mein check
+            if config.stream_process.poll() is not None:
+                log_file.write("❌ FFmpeg crash ho gaya, dobara start kar rahe hain...\n")
+                config.stream_process = subprocess.Popen(
+                    ffmpeg_command,
+                    stdin=subprocess.PIPE,
+                    stdout=log_file,
+                    stderr=log_file,
+                    bufsize=1
+                )
+                config.stream_start_time = datetime.now()
+
+        return True, "✅ Stream super smooth shuru ho gayi!"
+    except Exception as e:
+        return False, f"❌ Stream mein dikkat: {e}"
 async def stop_stream():
     """Stop the current stream"""
     if config.stream_process:
