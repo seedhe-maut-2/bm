@@ -92,28 +92,37 @@ async def start_stream():
             'ffmpeg',
             '-re',
             '-i', config.current_video_path,
-            '-vf', 'scale=1280:720',
+            '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',  # Changed from 'veryfast' to 'ultrafast' for lower latency
-            '-tune', 'zerolatency',  # Added for streaming
-            '-x264-params', 'keyint=50:min-keyint=25',  # Added for better keyframe control
-            '-b:v', '2500k',  # Changed from maxrate to b:v for constant bitrate
+            '-preset', 'superfast',
+            '-tune', 'zerolatency',
+            '-profile:v', 'main',
+            '-level', '3.1',
+            '-b:v', '2500k',
+            '-maxrate', '2500k',
+            '-minrate', '2500k',
             '-bufsize', '5000k',
             '-pix_fmt', 'yuv420p',
-            '-g', '50',
+            '-g', '60',
+            '-keyint_min', '60',
+            '-x264opts', 'nal-hrd=cbr:force-cfr=1',
             '-c:a', 'aac',
-            '-b:a', '128k',  # Reduced audio bitrate
-            '-ar', '44100',
-            '-threads', '2',  # Added to limit CPU usage
+            '-b:a', '160k',
+            '-ar', '48000',
+            '-ac', '2',
             '-f', 'flv',
+            '-flvflags', 'no_duration_filesize',
+            '-strict', 'experimental',
             config.rtmp_url
         ]
         
         config.stream_process = subprocess.Popen(
-            ffmpeg_command, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.STDOUT, 
-            universal_newlines=True
+            ffmpeg_command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1
         )
         config.stream_start_time = datetime.now()
         return True, "✅ Stream started successfully!"
