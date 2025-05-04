@@ -110,7 +110,7 @@ def start_command(message):
 def handle_attack_command(message):
     user_id = str(message.chat.id)
     if user_id not in allowed_user_ids:
-        return bot.reply_to(message, "❌ Access denied. Contact admin.")
+        return bot.reply_to(message, "❌ Access denied. `@seedhe_maut_bot`.")
     
     # Check cooldown first
     if user_id in maut_cooldown:
