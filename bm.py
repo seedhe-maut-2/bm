@@ -194,15 +194,15 @@ def handle_buttons(call):
             
             # Update message
             bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=f"🔥 *Attack Launched!* 🔥\n\n"
-                     f"🌐 Target: `{data['ip']}`\n"
-                     f"🔌 Port: `{data['port']}`\n"
-                     f"⏱ Duration: `{data['time']}`s\n\n"
-                     f"⚡ Powered by @seedhe_maut_bot",
-                parse_mode="Markdown"
-            )
+    chat_id=call.message.chat.id,
+    message_id=call.message.message_id,
+    text=f"🔥 *Attack Launched!* 🔥\n\n"
+         f"🌐 Target: `{data['ip']}`\n"
+         f"🔌 Port: `{data['port']}`\n"
+         f"⏱ Duration: `{data['time']}`s\n\n"
+         f"[⚡ Powered by @seedhe_maut_bot](https://t.me/seedhe_maut_bot)",
+    parse_mode="Markdown"
+)
             
             # Add new attack button
             markup = types.InlineKeyboardMarkup()
