@@ -9,11 +9,11 @@ from threading import Lock
 import sqlite3
 
 # Bot configuration
-bot = telebot.TeleBot('7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE')
+bot = telebot.TeleBot('7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0')
 admin_id = {"8167507955"}
 DB_FILE = "maut_bot.db"
 LOG_FILE = "attack_logs.txt"
-COOLDOWN_TIME = 600  # 5 minutes
+COOLDOWN_TIME = 1  # 5 minutes
 MAX_ATTACK_TIME = 240  # 4 minutes
 MAX_DAILY_ATTACKS = 10  # 10 attacks per day
 ATTACKS_PER_INVITE = 2  # 2 bonus attacks per invite
