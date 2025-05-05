@@ -5,6 +5,8 @@ import asyncio
 import signal
 from datetime import datetime
 import time
+import re
+from urllib.parse import urlparse
 
 # Force install required packages with --break-system-packages
 required = ['telethon', 'tqdm']
@@ -38,6 +40,8 @@ class Config:
         self.stream_process = None
         self.stream_start_time = None
         self.stream_restart_flag = False
+        self.download_queue = []
+        self.downloading = False
 
 config = Config()
 
@@ -48,6 +52,27 @@ bot = TelegramClient('bot', config.api_id, config.api_hash).start(bot_token=conf
 # Progress callback for download
 def progress_callback(current, total):
     bar.update(current - bar.n)
+
+def parse_telegram_url(url):
+    """Parse Telegram message URL to extract channel and message ID"""
+    try:
+        parsed = urlparse(url)
+        if not parsed.netloc.endswith('t.me'):
+            return None, None
+        
+        path_parts = parsed.path.strip('/').split('/')
+        if len(path_parts) < 2:
+            return None, None
+            
+        channel = path_parts[0]
+        try:
+            message_id = int(path_parts[1])
+        except ValueError:
+            return None, None
+            
+        return channel, message_id
+    except Exception:
+        return None, None
 
 async def download_video(channel_username, message_id):
     """Download video from Telegram message"""
@@ -61,7 +86,7 @@ async def download_video(channel_username, message_id):
             
             # Generate unique filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"video_{timestamp}.mp4"
+            filename = f"video_{channel_username}_{message_id}_{timestamp}.mp4"
             
             file_path = await client.download_media(
                 msg.media, 
@@ -70,16 +95,36 @@ async def download_video(channel_username, message_id):
             )
             bar.close()
             
-            # Update config
-            config.current_video_path = file_path
-            config.current_message_id = message_id
-            config.current_channel = channel_username
-            
             return file_path
         return None
     except Exception as e:
         print(f"Download error: {e}")
         return None
+
+async def process_download_queue():
+    """Process the download queue one by one"""
+    while config.download_queue and not config.downloading:
+        config.downloading = True
+        item = config.download_queue.pop(0)
+        channel, message_id, event = item
+        
+        try:
+            message = await event.reply(f"⏳ Downloading video from {channel} (message {message_id})...")
+            
+            file_path = await download_video(channel, message_id)
+            if file_path:
+                # Update config with the last downloaded video
+                config.current_video_path = file_path
+                config.current_message_id = message_id
+                config.current_channel = channel
+                
+                await message.edit(f"✅ Video downloaded successfully!\n\n📁 Path: `{file_path}`\n\nNow you can start stream with /startstream")
+            else:
+                await message.edit("❌ Failed to download video. Please check:\n1. Channel username\n2. Message ID\n3. Bot has access to the channel")
+        except Exception as e:
+            await event.reply(f"❌ Download error: {str(e)}")
+        finally:
+            config.downloading = False
 
 async def start_stream():
     """Start streaming the downloaded video smoothly with auto-restart and error logging."""
@@ -126,8 +171,7 @@ async def start_stream():
             ffmpeg_command,
             stdin=subprocess.PIPE,
             stdout=log_file,
-            stderr=log_file,
-            bufsize=1,
+            stderr=subprocess.STDOUT,
             preexec_fn=os.setsid
         )
         config.stream_start_time = datetime.now()
@@ -184,7 +228,6 @@ async def monitor_stream():
                     stdin=subprocess.PIPE,
                     stdout=log_file,
                     stderr=log_file,
-                    bufsize=1,
                     preexec_fn=os.setsid
                 )
                 config.stream_start_time = datetime.now()
@@ -229,12 +272,14 @@ async def start_handler(event):
 🤖 **Telegram Stream Bot** 🤖
 
 Available commands:
-- /download [channel] [message_id] - Download video
+- /download [channel] [message_id] or [message_url] - Download video
+- /downloadmulti [url1] [url2] ... - Download multiple videos
 - /startstream - Start live stream
 - /stopstream - Stop live stream
 - /status - Show current status
 - /setrtmp [url] - Update RTMP URL
 - /currentvideo - Show current video info
+- /queue - Show download queue
 - /help - Show this help
 """
     await event.reply(help_text)
@@ -246,22 +291,85 @@ async def download_handler(event):
         return
     
     args = event.message.text.split()
-    if len(args) != 3:
-        await event.reply("❌ Usage: /download channel_username message_id")
+    if len(args) < 2:
+        await event.reply("❌ Usage: /download channel_username message_id\nOr: /download https://t.me/channel/message_id")
         return
     
-    try:
+    # Check if it's a URL
+    if args[1].startswith('https://t.me/'):
+        channel, message_id = parse_telegram_url(args[1])
+        if not channel or not message_id:
+            await event.reply("❌ Invalid Telegram message URL format. Should be: https://t.me/channel/message_id")
+            return
+    else:
+        if len(args) != 3:
+            await event.reply("❌ Usage: /download channel_username message_id")
+            return
         channel = args[1]
-        message_id = int(args[2])
-        message = await event.reply(f"⏳ Downloading video from {channel} (message {message_id})...")
+        try:
+            message_id = int(args[2])
+        except ValueError:
+            await event.reply("❌ Message ID must be a number")
+            return
+    
+    # Add to download queue
+    config.download_queue.append((channel, message_id, event))
+    await event.reply(f"📥 Added to download queue. Position: {len(config.download_queue)}")
+    
+    # Start processing if not already
+    if not config.downloading:
+        await process_download_queue()
+
+@bot.on(events.NewMessage(pattern='/downloadmulti'))
+async def download_multi_handler(event):
+    if not is_user_allowed(event.sender_id):
+        await event.reply("🚫 You are not authorized to use this bot.")
+        return
+    
+    args = event.message.text.split()
+    if len(args) < 2:
+        await event.reply("❌ Usage: /downloadmulti url1 url2 url3...")
+        return
+    
+    added = 0
+    for url in args[1:]:
+        if not url.startswith('https://t.me/'):
+            await event.reply(f"❌ Invalid URL: {url} - Skipping")
+            continue
         
-        file_path = await download_video(channel, message_id)
-        if file_path:
-            await message.edit(f"✅ Video downloaded successfully!\n\n📁 Path: `{file_path}`\n\nNow you can start stream with /startstream")
-        else:
-            await message.edit("❌ Failed to download video. Please check:\n1. Channel username\n2. Message ID\n3. Bot has access to the channel")
-    except Exception as e:
-        await event.reply(f"❌ Error: {str(e)}")
+        channel, message_id = parse_telegram_url(url)
+        if not channel or not message_id:
+            await event.reply(f"❌ Couldn't parse URL: {url} - Skipping")
+            continue
+        
+        config.download_queue.append((channel, message_id, event))
+        added += 1
+    
+    await event.reply(f"📥 Added {added} videos to download queue. Total in queue: {len(config.download_queue)}")
+    
+    # Start processing if not already
+    if not config.downloading and config.download_queue:
+        await process_download_queue()
+
+@bot.on(events.NewMessage(pattern='/queue'))
+async def queue_handler(event):
+    if not is_user_allowed(event.sender_id):
+        await event.reply("🚫 You are not authorized to use this bot.")
+        return
+    
+    if not config.download_queue:
+        await event.reply("ℹ️ Download queue is empty")
+        return
+    
+    message = "📥 Download queue:\n"
+    for i, item in enumerate(config.download_queue, 1):
+        channel, message_id, _ = item
+        message += f"{i}. {channel} (message {message_id})\n"
+    
+    if config.downloading:
+        message += "\n🔄 Currently downloading..."
+    
+    await event.reply(message)
 
 @bot.on(events.NewMessage(pattern='/startstream'))
 async def start_stream_handler(event):
@@ -312,6 +420,11 @@ async def status_handler(event):
         status.append("🟢 Stream: Stopped")
     
     status.append(f"🌐 RTMP URL: `{config.rtmp_url}`")
+    
+    if config.download_queue:
+        status.append(f"\n📥 Download queue: {len(config.download_queue)} items")
+        if config.downloading:
+            status.append("🔄 Currently downloading...")
     
     await event.reply("\n".join(status))
 
