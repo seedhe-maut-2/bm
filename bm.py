@@ -9,7 +9,7 @@ from threading import Lock
 import signal
 
 # Bot configuration
-bot = telebot.TeleBot('7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE')
+bot = telebot.TeleBot('7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0')
 admin_id = {"8167507955"}
 USER_FILE = "users.txt"
 USER_TIME_LIMITS = "user_limits.txt"
