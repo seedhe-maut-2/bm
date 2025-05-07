@@ -22,17 +22,20 @@ class NumberGenerator:
         """Generate valid 10-digit Indian mobile numbers"""
         valid_numbers = []
         attempts = 0
-        max_attempts = count * 2  # Prevent infinite loops
+        max_attempts = count * 10  # Increased attempts for better success
         
         while len(valid_numbers) < count and attempts < max_attempts:
-            # Generate random digits to complete 10 digits (including prefix)
+            # Calculate remaining digits needed (total 10 digits including prefix)
             remaining_digits = 10 - len(prefix)
+            if remaining_digits <= 0:
+                break
+                
             random_part = ''.join([str(random.randint(0, 9)) for _ in range(remaining_digits)])
             full_number = f"+91{prefix}{random_part}"
             
-            # Validate (Indian numbers start with 6-9 after +91)
-            if (full_number[3] in '6789' and 
-                len(full_number) == 12 and
+            # Validate Indian number format
+            if (len(full_number) == 13 and  # +91 + 10 digits
+                full_number[3] in '6789' and  # Valid Indian starting digit
                 full_number not in self.generated_numbers):
                 
                 self.generated_numbers[full_number] = True
@@ -49,130 +52,147 @@ class NumberGenerator:
         self.number_files[prefix] = filename
         return filename
     
-    def check_number(self, number):
-        """Check number using external API"""
+    def check_numbers_from_file(self, filename):
+        """Check numbers from file using API"""
+        results = []
         try:
-            response = requests.get(
-                f"https://newtrue.rishuapi.workers.dev/?number={number}",
-                timeout=5
-            )
-            return response.json()
+            with open(filename, 'r') as f:
+                numbers = [line.strip() for line in f if line.strip()]
+                
+                for number in numbers[:100]:  # Limit to 100 checks per file
+                    try:
+                        response = requests.get(
+                            f"https://newtrue.rishuapi.workers.dev/?number={number}",
+                            timeout=3
+                        )
+                        results.append(f"{number}: {response.json()}")
+                    except:
+                        results.append(f"{number}: API Error")
         except Exception as e:
-            return {"error": str(e)}
+            results.append(f"File Error: {str(e)}")
+        return results
 
 generator = NumberGenerator()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
-    welcome_text = (
-        "🇮🇳 *Ultimate Mobile Number Generator*\n\n"
-        "📱 *Commands:*\n"
-        "`/gen <prefix> <count>` - Generate numbers\n"
-        "`/check` - Check numbers from file\n\n"
-        "💾 All numbers automatically saved in .txt files\n"
-        "🔄 100% unique numbers guaranteed\n"
-        "🔍 API verification available"
+    help_text = (
+        "📱 *Mobile Number Generator Bot*\n\n"
+        "🔹 Generate numbers:\n"
+        "`/gen <prefix> <count>`\n"
+        "Example: `/gen 976 10`\n\n"
+        "🔹 Check numbers from file:\n"
+        "`/check` (reply to a .txt file)\n\n"
+        "📝 Prefix must be 2-4 digits\n"
+        "💾 All numbers saved in .txt files"
     )
-    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle number generation"""
     try:
         if len(context.args) < 2:
-            await update.message.reply_text("Usage: `/gen <2-4 digit prefix> <count>`", parse_mode='Markdown')
+            await update.message.reply_text("Usage: `/gen <prefix> <count>`\nExample: `/gen 976 10`", parse_mode='Markdown')
             return
         
         prefix = context.args[0]
         count = int(context.args[1])
         
+        # Validate prefix
         if not (2 <= len(prefix) <= 4 and prefix.isdigit()):
-            await update.message.reply_text("❌ Prefix must be 2-4 digits (e.g. 976, 87)")
+            await update.message.reply_text("❌ Prefix must be 2-4 digits (e.g. 98, 976, 9999)")
             return
         
-        if count <= 0:
-            await update.message.reply_text("❌ Count must be positive")
+        # Validate count
+        if count <= 0 or count > 10000:
+            await update.message.reply_text("❌ Count must be 1-10000")
             return
         
-        # Safety limit
-        count = min(count, 10000)  # Max 10,000 per request
-        
+        # Generate numbers
         numbers = generator.generate_indian_number(prefix, count)
         
         if not numbers:
-            await update.message.reply_text("❌ Failed to generate unique numbers")
+            await update.message.reply_text("❌ Failed to generate numbers. Try a different prefix or smaller count.")
             return
         
         # Save to file
         filename = generator.save_to_file(prefix, numbers)
         
-        # Send response
+        # Send results
         preview = "\n".join(numbers[:5])
-        await update.message.reply_text(
-            f"✅ Generated {len(numbers)} numbers (first 5):\n\n{preview}"
-        )
+        msg = f"✅ Generated {len(numbers)} numbers starting with {prefix}:\n\n{preview}"
+        if len(numbers) > 5:
+            msg += f"\n\n...and {len(numbers)-5} more"
         
-        # Send complete file
+        await update.message.reply_text(msg)
+        
+        # Send file
         with open(filename, 'rb') as f:
             await update.message.reply_document(
                 document=f,
-                caption=f"Complete list of {len(numbers)} numbers"
+                caption=f"Full list of {len(numbers)} numbers"
             )
-    
-    except (IndexError, ValueError):
-        await update.message.reply_text("Usage: `/gen <2-4 digit prefix> <count>`", parse_mode='Markdown')
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle number verification"""
-    if not update.message.document:
-        await update.message.reply_text("❌ Please upload a .txt file with numbers")
+    if not update.message.document and not update.message.reply_to_message:
+        await update.message.reply_text("❌ Please reply to a .txt file with `/check`")
         return
     
     try:
-        # Download the file
-        file = await update.message.document.get_file()
-        await file.download_to_drive("check_numbers.txt")
+        # Get the file
+        if update.message.document:
+            file = await update.message.document.get_file()
+        else:
+            if not update.message.reply_to_message.document:
+                await update.message.reply_text("❌ Please reply to a .txt file")
+                return
+            file = await update.message.reply_to_message.document.get_file()
         
-        # Read numbers from file
-        with open("check_numbers.txt", 'r') as f:
-            numbers = [line.strip() for line in f.readlines() if line.strip()]
+        # Download file
+        filename = "numbers_to_check.txt"
+        await file.download_to_drive(filename)
         
-        if not numbers:
+        # Check numbers
+        results = generator.check_numbers_from_file(filename)
+        
+        # Send results
+        if not results:
             await update.message.reply_text("❌ No valid numbers found in file")
             return
         
-        # Check first 5 numbers (to avoid API spam)
-        results = []
-        for number in numbers[:5]:
-            result = generator.check_number(number)
-            results.append(f"{number}: {result}")
-        
-        response = "🔍 Verification Results (first 5):\n\n" + "\n".join(results)
-        await update.message.reply_text(response)
-        
-        # Save full results
-        with open("verification_results.txt", 'w') as f:
-            f.write("\n".join(results))
+        # Send preview
+        preview = "\n".join(results[:5])
+        await update.message.reply_text(f"🔍 Verification Results (sample):\n\n{preview}")
         
         # Send full results file
-        with open("verification_results.txt", 'rb') as f:
+        results_filename = "verification_results.txt"
+        with open(results_filename, 'w') as f:
+            f.write("\n".join(results))
+        
+        with open(results_filename, 'rb') as f:
             await update.message.reply_document(
                 document=f,
                 caption="Full verification results"
             )
-    
+            
     except Exception as e:
-        await update.message.reply_text(f"❌ Error processing file: {str(e)}")
+        await update.message.reply_text(f"❌ Error checking numbers: {str(e)}")
 
 def main():
     """Run the bot"""
-    # WARNING: Replace with your actual token from @BotFather
-    # NOTE: The token shown here is already compromised and should be revoked
+    # WARNING: Replace with your actual token
     application = Application.builder().token("7818864949:AAEpqPVZj4oUAl2hFyiTSbZqfbzDr3TQ9fw").build()
     
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("gen", generate_numbers))
     application.add_handler(CommandHandler("check", check_numbers))
     
+    # Run bot
     application.run_polling()
 
 if __name__ == '__main__':
