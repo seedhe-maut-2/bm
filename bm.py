@@ -96,7 +96,7 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Run bot"""
-    application = Application.builder().token("YOUR_BOT_TOKEN").build()
+    application = Application.builder().token("7818864949:AAEpqPVZj4oUAl2hFyiTSbZqfbzDr3TQ9fw").build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("gen", generate_numbers))
