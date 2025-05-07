@@ -1,178 +1,107 @@
 import random
 from collections import OrderedDict
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import os
+from telegram.ext import Application, CommandHandler, ContextTypes
 import logging
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 class MobileNumberGenerator:
     def __init__(self):
         self.generated_numbers = OrderedDict()
-        self.default_filename = "mobile_numbers.txt"
     
-    def generate_number(self, pattern):
-        """Generate a mobile number based on the pattern"""
-        number = []
-        for char in pattern:
-            if char == '^':
-                number.append(str(random.randint(0, 9)))
-            else:
-                number.append(char)
-        return ''.join(number)
-    
-    def generate_unique_numbers(self, pattern, count, filename=None):
-        """Generate unique mobile numbers and return them as a list"""
-        if filename is None:
-            filename = self.default_filename
-        
-        digits_needed = pattern.count('^')
-        total_possible = 10 ** digits_needed
-        
-        if count > total_possible:
-            count = total_possible
-        
+    def generate_indian_number(self, prefix, count):
+        """Generate valid 10-digit Indian mobile numbers"""
         generated_numbers = []
-        generated = 0
+        attempts = 0
+        max_attempts = count * 2  # Prevent infinite loops
         
-        while generated < count:
-            num = self.generate_number(pattern)
-            if num not in self.generated_numbers:
-                self.generated_numbers[num] = True
-                generated_numbers.append(num)
-                generated += 1
+        while len(generated_numbers) < count and attempts < max_attempts:
+            # Generate random 7 digits (prefix provides first 3)
+            random_part = ''.join([str(random.randint(0, 9)) for _ in range(7)])
+            full_number = f"+91{prefix}{random_part}"
+            
+            # Validate (Indian numbers start with 6-9 after +91)
+            if full_number[3] in '6789' and full_number not in self.generated_numbers:
+                self.generated_numbers[full_number] = True
+                generated_numbers.append(full_number)
+            attempts += 1
         
         return generated_numbers
 
 # Initialize the generator
 generator = MobileNumberGenerator()
 
-# Telegram bot commands
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /start is issued."""
-    user = update.effective_user
-    welcome_msg = (
-        f"Hi {user.first_name}! 👋\n\n"
-        "I'm Mobile Number Generator Bot 🤖\n\n"
-        "📱 Send me commands like:\n"
-        "/gen +91976^^^^^^ 10 - To generate 10 numbers starting with +91976\n"
-        "/gen +91754^^^^^^ 5  - To generate 5 numbers starting with +91754\n\n"
-        "Each '^' will be replaced with a random digit\n"
-        "Example: +91976^^^^^^ creates 10-digit numbers"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send welcome message"""
+    await update.message.reply_text(
+        "📱 <b>Indian Mobile Number Generator</b>\n\n"
+        "Send: <code>/gen 976 10</code>\n"
+        "To generate 10 numbers starting with 976\n\n"
+        "<i>Numbers will be valid 10-digit Indian numbers (+91XXXXXXXXXX)</i>",
+        parse_mode='HTML'
     )
-    await update.message.reply_text(welcome_msg)
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued."""
-    help_text = (
-        "🆘 <b>Help Guide</b> 🆘\n\n"
-        "🔹 <b>Generate Numbers</b>:\n"
-        "<code>/gen +91976^^^^^^ 10</code> - Generates 10 numbers starting with +91976\n\n"
-        "🔹 <b>Pattern Rules</b>:\n"
-        "- Must start with country code (e.g., +91)\n"
-        "- Use ^ symbols for random digits\n"
-        "- Example: +91754^^^^^^ generates 10-digit numbers\n\n"
-        "🔹 <b>Other Commands</b>:\n"
-        "/start - Show welcome message\n"
-        "/stats - Show generation statistics\n"
-        "/clear - Clear all generated numbers from memory"
-    )
-    await update.message.reply_text(help_text, parse_mode='HTML')
-
-async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generate mobile numbers based on user pattern"""
+async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /gen command"""
     try:
         if len(context.args) < 2:
-            await update.message.reply_text("⚠️ Usage: /gen +91976^^^^^^ 10")
+            await update.message.reply_text("Usage: /gen <prefix> <count>\nExample: /gen 976 10")
             return
         
-        pattern = context.args[0]
+        prefix = context.args[0]
         count = int(context.args[1])
         
-        if count <= 0:
-            await update.message.reply_text("❌ Count must be greater than 0")
+        if not prefix.isdigit() or len(prefix) not in (2, 3, 4):
+            await update.message.reply_text("❌ Prefix must be 2-4 digits (e.g., 976, 87, 9999)")
             return
         
-        if not pattern.startswith('+') or '^' not in pattern:
-            await update.message.reply_text("❌ Invalid pattern. Must start with '+' and contain '^'")
+        if count <= 0 or count > 1000:
+            await update.message.reply_text("❌ Count must be between 1-1000")
             return
         
-        # Calculate expected length for Indian numbers (+91 + 10 digits)
-        if len(pattern.replace('^', '0')) != 12 or pattern.count('^') != 10 - (len(pattern) - pattern.count('^') - 3):
-            await update.message.reply_text("⚠️ Note: Pattern should result in 10-digit Indian numbers (+91XXXXXXXXXX)")
-        
-        numbers = generator.generate_unique_numbers(pattern, count)
+        # Generate numbers
+        numbers = generator.generate_indian_number(prefix, count)
         
         if not numbers:
-            await update.message.reply_text("❌ No numbers generated. Try a different pattern.")
+            await update.message.reply_text("❌ Failed to generate unique numbers. Try a smaller count.")
             return
         
-        # Send first 10 numbers in message (Telegram has message length limits)
-        preview = "\n".join(numbers[:10])
+        # Format response
+        response = f"✅ Generated {len(numbers)} numbers:\n\n"
+        response += "\n".join(numbers[:10])  # Show first 10
         if len(numbers) > 10:
-            preview += f"\n\n...and {len(numbers)-10} more numbers"
+            response += f"\n\n...and {len(numbers)-10} more"
         
-        # Save all numbers to file
-        filename = f"numbers_{pattern[:6]}.txt"
-        with open(filename, 'w') as f:
-            f.write("\n".join(numbers))
+        await update.message.reply_text(response)
         
-        # Send response
-        await update.message.reply_text(
-            f"✅ Generated {len(numbers)} unique numbers:\n\n{preview}"
-        )
-        
-        # Send the complete file
-        with open(filename, 'rb') as f:
-            await update.message.reply_document(
-                document=f,
-                caption=f"Complete list of {len(numbers)} numbers"
-            )
-        
-    except (ValueError, IndexError):
-        await update.message.reply_text("⚠️ Invalid command format. Use: /gen +91976^^^^^^ 10")
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show generation statistics"""
-    if not generator.generated_numbers:
-        await update.message.reply_text("ℹ️ No numbers generated yet")
-        return
+        # Save to file if more than 10 numbers
+        if len(numbers) > 10:
+            filename = f"numbers_{prefix}.txt"
+            with open(filename, 'w') as f:
+                f.write("\n".join(numbers))
+            with open(filename, 'rb') as f:
+                await update.message.reply_document(
+                    document=f,
+                    caption=f"Full list of {len(numbers)} numbers"
+                )
     
-    patterns = {}
-    for num in generator.generated_numbers:
-        prefix = num[:7]  # Get the base pattern (+91976 or +91754 etc.)
-        patterns[prefix] = patterns.get(prefix, 0) + 1
+    except ValueError:
+        await update.message.reply_text("❌ Invalid input. Usage: /gen <prefix> <count>")
+
+def main():
+    """Run bot"""
+    application = Application.builder().token("YOUR_BOT_TOKEN").build()
     
-    stats_msg = "📊 Generation Statistics:\n\n"
-    for pattern, count in patterns.items():
-        stats_msg += f"{pattern}******: {count} numbers\n"
-    
-    await update.message.reply_text(stats_msg)
-
-async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Clear all generated numbers from memory"""
-    generator.generated_numbers.clear()
-    await update.message.reply_text("♻️ All generated numbers cleared from memory")
-
-def main() -> None:
-    """Start the bot."""
-    # Create the Application and pass it your bot's token.
-    application = Application.builder().token("7818864949:AAEpqPVZj4oUAl2hFyiTSbZqfbzDr3TQ9fw").build()
-
-    # on different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("gen", generate_numbers))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("clear", clear_command))
-
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
