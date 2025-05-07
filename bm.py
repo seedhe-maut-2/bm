@@ -25,8 +25,9 @@ class NumberGenerator:
         max_attempts = count * 2  # Prevent infinite loops
         
         while len(valid_numbers) < count and attempts < max_attempts:
-            # Generate random 7 digits (prefix provides first 3)
-            random_part = ''.join([str(random.randint(0, 9)) for _ in range(10 - len(prefix) - 2)])
+            # Generate random digits to complete 10 digits (including prefix)
+            remaining_digits = 10 - len(prefix)
+            random_part = ''.join([str(random.randint(0, 9)) for _ in range(remaining_digits)])
             full_number = f"+91{prefix}{random_part}"
             
             # Validate (Indian numbers start with 6-9 after +91)
@@ -63,20 +64,24 @@ generator = NumberGenerator()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
-    await update.message.reply_text(
-        "🇮🇳 <b>Ultimate Mobile Number Generator</b>\n\n"
-        "📱 <b>Commands:</b>\n"
-        "/gen <prefix> <count> - Generate numbers\n"
-        "/check - Check numbers from file\n\n"
+    welcome_text = (
+        "🇮🇳 *Ultimate Mobile Number Generator*\n\n"
+        "📱 *Commands:*\n"
+        "`/gen <prefix> <count>` - Generate numbers\n"
+        "`/check` - Check numbers from file\n\n"
         "💾 All numbers automatically saved in .txt files\n"
         "🔄 100% unique numbers guaranteed\n"
-        "🔍 API verification available",
-        parse_mode='HTML'
+        "🔍 API verification available"
     )
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
 async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle number generation"""
     try:
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: `/gen <2-4 digit prefix> <count>`", parse_mode='Markdown')
+            return
+        
         prefix = context.args[0]
         count = int(context.args[1])
         
@@ -88,7 +93,7 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Count must be positive")
             return
         
-        # Unlimited generation with safety limit
+        # Safety limit
         count = min(count, 10000)  # Max 10,000 per request
         
         numbers = generator.generate_indian_number(prefix, count)
@@ -114,7 +119,7 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /gen <2-4 digit prefix> <count>")
+        await update.message.reply_text("Usage: `/gen <2-4 digit prefix> <count>`", parse_mode='Markdown')
 
 async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle number verification"""
@@ -122,10 +127,12 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please upload a .txt file with numbers")
         return
     
-    file = await update.message.document.get_file()
-    await file.download_to_drive("check_numbers.txt")
-    
     try:
+        # Download the file
+        file = await update.message.document.get_file()
+        await file.download_to_drive("check_numbers.txt")
+        
+        # Read numbers from file
         with open("check_numbers.txt", 'r') as f:
             numbers = [line.strip() for line in f.readlines() if line.strip()]
         
@@ -158,7 +165,8 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Run the bot"""
-    # Replace with your actual token from @BotFather
+    # WARNING: Replace with your actual token from @BotFather
+    # NOTE: The token shown here is already compromised and should be revoked
     application = Application.builder().token("7818864949:AAEpqPVZj4oUAl2hFyiTSbZqfbzDr3TQ9fw").build()
     
     application.add_handler(CommandHandler("start", start))
