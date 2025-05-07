@@ -6,7 +6,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import logging
 import os
-from typing import List, Dict
 
 # Setup logging
 logging.basicConfig(
@@ -20,7 +19,7 @@ class NumberGenerator:
         self.generated_numbers = OrderedDict()
         self.number_files = {}
     
-    def generate_indian_number(self, prefix: str, count: int) -> List[str]:
+    def generate_indian_number(self, prefix, count):
         """Generate valid 10-digit Indian mobile numbers"""
         valid_numbers = []
         attempts = 0
@@ -41,7 +40,7 @@ class NumberGenerator:
         
         return valid_numbers
     
-    def save_to_file(self, prefix: str, numbers: List[str]) -> str:
+    def save_to_file(self, prefix, numbers):
         """Save numbers to a text file"""
         filename = f"numbers_{prefix}.txt"
         with open(filename, 'w') as f:
@@ -53,16 +52,16 @@ class NumberChecker:
     def __init__(self):
         self.api_url = "https://newtrue.rishuapi.workers.dev/?number="
     
-    async def check_single_number(self, number: str) -> Dict:
-        """Check single number with progress callback"""
+    def check_number(self, number):
+        """Check single number"""
         try:
             response = requests.get(f"{self.api_url}{number}", timeout=5)
             return response.json()
         except Exception as e:
             return {"error": str(e)}
     
-    def format_result(self, number: str, data: Dict) -> str:
-        """Format verification results beautifully"""
+    def format_result(self, number, data):
+        """Format verification results"""
         if 'error' in data:
             return f"❌ {number}: {data['error']}"
         
@@ -71,30 +70,29 @@ class NumberChecker:
             f"🏢 *Carrier*: {data.get('carrier', 'Unknown')}\n"
             f"🌍 *Location*: {data.get('location', 'Unknown')}\n"
             f"🆔 *Truecaller*: {data.get('Truecaller', 'Not available')}\n"
-            f"⏱ *Last Checked*: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data.get('timestamp', 0)/1000))}\n"
-            f"🔗 *API*: [RishuAPI](https://t.me/RishuApi)"
+            f"⏱ *Last Checked*: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data.get('timestamp', 0)/1000))}"
         )
 
+# Initialize classes
+generator = NumberGenerator()
 checker = NumberChecker()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
     help_text = (
-        "🔍 *Mobile Number Verification Bot*\n\n"
-        "✨ *Features*:\n"
-        "- Generate valid Indian numbers\n"
-        "- Detailed carrier/lookup information\n"
-        "- Truecaller integration\n"
-        "- Progress tracking\n\n"
+        "🔍 *Mobile Number Generator & Checker Bot*\n\n"
         "📌 *Commands*:\n"
-        "`/gen <prefix> <count>` - Generate numbers\n"
-        "`/check` - Verify numbers from file\n\n"
-        "Example: `/gen 976 10` then reply with `/check`"
+        "`/gen <prefix> <count>` - Generate numbers (e.g. `/gen 976 10`)\n"
+        "`/check` - Verify numbers from file (reply to .txt file)\n\n"
+        "✨ *Features*:\n"
+        "- 100% valid Indian numbers\n"
+        "- Carrier/location information\n"
+        "- Real-time progress tracking"
     )
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle number generation"""
+    """Handle number generation with progress bar"""
     try:
         if len(context.args) < 2:
             await update.message.reply_text("Usage: `/gen <prefix> <count>`\nExample: `/gen 976 10`", parse_mode='Markdown')
@@ -104,14 +102,14 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = int(context.args[1])
         
         if not (2 <= len(prefix) <= 4 and prefix.isdigit()):
-            await update.message.reply_text("❌ Prefix must be 2-4 digits (e.g. 98, 976, 9999)")
+            await update.message.reply_text("❌ Prefix must be 2-4 digits (e.g. 976, 87)")
             return
         
-        if count <= 0 or count > 10000:
-            await update.message.reply_text("❌ Count must be 1-10000")
+        if count <= 0 or count > 1000:
+            await update.message.reply_text("❌ Count must be 1-1000")
             return
         
-        # Send generating message with progress
+        # Send initial progress message
         progress_msg = await update.message.reply_text("🔄 Generating numbers... (0%)")
         
         numbers = []
@@ -119,6 +117,7 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             num = generator.generate_indian_number(prefix, 1)
             if num:
                 numbers.extend(num)
+            
             # Update progress every 10% or 10 numbers
             if i % max(10, count//10) == 0 or i == count:
                 progress = int((i/count)*100)
@@ -130,13 +129,8 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         filename = generator.save_to_file(prefix, numbers)
         
-        # Final message
-        await progress_msg.edit_text(
-            f"✅ Successfully generated {len(numbers)} numbers!\n"
-            f"📁 File: `{filename}`"
-        )
-        
-        # Send file
+        # Send results
+        await progress_msg.edit_text(f"✅ Generated {len(numbers)} numbers!")
         with open(filename, 'rb') as f:
             await update.message.reply_document(
                 document=f,
@@ -147,9 +141,9 @@ async def generate_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle number verification with progress tracking"""
+    """Handle number verification with progress bar"""
     if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        await update.message.reply_text("❌ Please reply to a number file with `/check`")
+        await update.message.reply_text("❌ Please reply to a .txt file with `/check`")
         return
     
     try:
@@ -166,15 +160,15 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No valid numbers found in file")
             return
         
-        # Limit to 100 numbers per check
+        # Limit to 100 numbers
         numbers = numbers[:100]
         total = len(numbers)
         
-        # Send initial progress message
+        # Send initial progress
         progress_msg = await update.message.reply_text(
             f"🔍 Verifying {total} numbers...\n"
             "🔄 Progress: 0% (0/{total})\n"
-            "⏱ Estimated time: Calculating..."
+            "⏱ Estimated: Calculating..."
         )
         
         results = []
@@ -182,7 +176,7 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for i, number in enumerate(numbers, 1):
             # Check number
-            data = await checker.check_single_number(number)
+            data = checker.check_number(number)
             results.append(checker.format_result(number, data))
             
             # Update progress every 25% or 5 numbers
@@ -194,9 +188,9 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await progress_msg.edit_text(
                     f"🔍 Verifying {total} numbers...\n"
                     f"🔄 Progress: {progress}% ({i}/{total})\n"
-                    f"⏱ Remaining: {int(remaining)} seconds\n"
-                    f"✅ Verified: {i - results.count('❌')} ✔️\n"
-                    f"❌ Errors: {results.count('❌')} ✖️"
+                    f"⏱ Remaining: ~{int(remaining)}s\n"
+                    f"✅ Valid: {len([r for r in results if '❌' not in r])}\n"
+                    f"❌ Errors: {len([r for r in results if '❌' in r])}"
                 )
         
         # Save results
@@ -209,8 +203,8 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📊 Verification Complete!\n\n"
             f"Sample Results:\n\n{sample}\n\n"
-            f"✅ Success: {len([r for r in results if '❌' not in r])}\n"
-            f"❌ Errors: {results.count('❌')}",
+            f"✅ Valid: {len([r for r in results if '❌' not in r])}\n"
+            f"❌ Errors: {len([r for r in results if '❌' in r])}",
             parse_mode='Markdown'
         )
         
@@ -218,7 +212,7 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(results_filename, 'rb') as f:
             await update.message.reply_document(
                 document=f,
-                caption=f"Full verification results ({total} numbers)"
+                caption=f"Full results ({total} numbers)"
             )
             
     except Exception as e:
@@ -226,6 +220,7 @@ async def check_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Run the bot"""
+    # WARNING: Replace with your actual token
     application = Application.builder().token("7818864949:AAEpqPVZj4oUAl2hFyiTSbZqfbzDr3TQ9fw").build()
     
     # Add handlers
