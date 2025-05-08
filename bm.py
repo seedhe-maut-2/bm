@@ -1,35 +1,44 @@
 import subprocess
 import time
+import threading
 
 HLS_URL = "https://starsportshindiii.pages.dev/index.m3u8"
 RTMP_URL = "rtmps://dc5-1.rtmp.t.me/s/2267436984:nW65YgeqV8ToqhVO-1qDMQ"
-LOGO_PATH = "logo.png"  # Make sure this exists in same folder
 
-def start_stream():
+def run_ffmpeg():
     command = [
         "ffmpeg",
         "-re",
         "-fflags", "nobuffer",
         "-flags", "low_delay",
+        "-strict", "experimental",
         "-analyzeduration", "5000000",
         "-probesize", "5000000",
+        "-rw_timeout", "5000000",
+        "-timeout", "5000000",
         "-i", HLS_URL,
-        "-i", LOGO_PATH,
-        "-filter_complex", "overlay=W-w-10:10",  # top-right corner
-        "-c:v", "libx264",  # Required when using filters
-        "-preset", "veryfast",
+        "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "128k",
         "-f", "flv",
         RTMP_URL
     ]
+    return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def monitor_stream():
     while True:
-        print("Starting stream with logo overlay...")
-        process = subprocess.Popen(command)
-        process.wait()
-        print("FFmpeg stopped. Restarting...")
-        time.sleep(1)
+        print("Launching FFmpeg stream...")
+        process = run_ffmpeg()
+        start_time = time.time()
+        while True:
+            if process.poll() is not None:
+                print("FFmpeg crashed. Restarting...")
+                break
+            # Check every second if process is alive
+            time.sleep(1)
 
 if __name__ == "__main__":
-    start_stream()
+    try:
+        monitor_stream()
+    except KeyboardInterrupt:
+        print("Streaming manually stopped.")
