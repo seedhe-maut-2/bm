@@ -2,7 +2,7 @@ import subprocess
 import logging
 
 HLS_URL = "https://starsportshindiii.pages.dev/index.m3u8"
-RTMP_URL = "rtmps://dc5-1.rtmp.t.me/s/2267436984:nW65YgeqV8ToqhVO-1qDMQ"
+RTMP_URL = "rtmps://dc5-1.rtmp.t.me/s/2440538814:kDLjt9MP0sRKSFhD4bS6SQ"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
