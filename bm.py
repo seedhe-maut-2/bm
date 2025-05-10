@@ -470,11 +470,7 @@ def generate_temp_email():
 def main():
     display_banner()
     
-    # Open Telegram channel (optional)
-    try:
-        webbrowser.open('https://t.me/gggkkkggggiii')
-    except:
-        pass
+
     
     creator = InstagramAccountCreator()
     
