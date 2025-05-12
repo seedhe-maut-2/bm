@@ -19,7 +19,7 @@ logging.basicConfig(
 # Constants
 TOKEN = '7713354946:AAFdS8AbgRyPgL8d_5utsURl2rMl1Y2lZro'
 MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
-GROUP_ID = -4646278924  # Your group ID
+GROUP_ID = -1002592414270  # Your group ID
 ADMIN_IDS = [8167507955]  # Your admin ID
 OWNER_NAME = "Seedhe Maut"
 OWNER_USERNAME = "@seedhe_maut_bot"
@@ -31,6 +31,7 @@ THREADS_COUNT = 900
 client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 db = client['soul']
 users_collection = db.users
+groups_collection = db.groups
 
 # Initialize bot
 bot = telebot.TeleBot(TOKEN)
@@ -47,10 +48,20 @@ def should_respond(chat_id, user_id):
     # Only respond in group if message is from admin
     if chat_id == GROUP_ID and user_id in ADMIN_IDS:
         return True
+    # Respond in private chats to all users
+    if chat_id > 0:
+        return True
     return False
 
 def is_user_admin(user_id):
     return user_id in ADMIN_IDS
+
+def is_group_admin(chat_id, user_id):
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        return member.status in ['administrator', 'creator']
+    except:
+        return False
 
 def check_user_approval(user_id):
     try:
@@ -107,13 +118,49 @@ def create_admin_menu():
     markup = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add(
         KeyboardButton("👥 User Management"),
+        KeyboardButton("👥 Group Settings"),
         KeyboardButton("📊 Stats"),
         KeyboardButton("🔙 Main Menu")
     )
     return markup
 
-def send_welcome_message(chat_id):
-    welcome_msg = f"""
+def create_group_settings_menu():
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("🛡 Set Welcome Message", callback_data="set_welcome"),
+        InlineKeyboardButton("🚫 Set Rules", callback_data="set_rules"),
+        InlineKeyboardButton("🔒 Lock Group", callback_data="lock_group"),
+        InlineKeyboardButton("🔓 Unlock Group", callback_data="unlock_group")
+    )
+    return markup
+
+def send_welcome_message(chat_id, user_id=None):
+    if chat_id == GROUP_ID:
+        # Get group welcome message from DB
+        group_data = groups_collection.find_one({"group_id": GROUP_ID})
+        welcome_msg = group_data.get('welcome_message', f"""
+🌟 Welcome to {OWNER_NAME}'s Group! 🌟
+
+🔹 Follow the rules
+🔹 Be respectful
+🔹 No spam
+
+Enjoy your stay!
+""")
+        
+        if user_id:
+            try:
+                user = bot.get_chat_member(chat_id, user_id).user
+                welcome_msg = welcome_msg.replace("{name}", user.first_name)
+                welcome_msg = welcome_msg.replace("{username}", f"@{user.username}" if user.username else user.first_name)
+            except:
+                pass
+            
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📜 Rules", callback_data="show_rules"))
+        bot.send_message(chat_id, welcome_msg, reply_markup=markup)
+    else:
+        welcome_msg = f"""
 🌟 *Welcome to {OWNER_NAME}'s DDoS Protection Bot* 🌟
 
 🔹 *Owner:* {OWNER_NAME} ({OWNER_USERNAME})
@@ -126,7 +173,7 @@ def send_welcome_message(chat_id):
 
 Use /help to see available commands.
 """
-    bot.send_message(chat_id, welcome_msg, parse_mode='Markdown', reply_markup=create_main_menu())
+        bot.send_message(chat_id, welcome_msg, parse_mode='Markdown', reply_markup=create_main_menu())
 
 def send_help_message(chat_id):
     help_msg = f"""
@@ -139,10 +186,12 @@ def send_help_message(chat_id):
 /mystats - Show your usage statistics
 /buy - Get information about plans
 
-*How to Use:*
-1. Send /attack or click "🚀 Start Attack"
-2. Provide target IP and port (separated by space)
-3. Confirm the attack
+*Group Commands:*
+/rules - Show group rules
+/warn <user> - Warn a user
+/ban <user> - Ban a user
+/unban <user> - Unban a user
+/kick <user> - Kick a user
 
 *Admin Commands* (Admin only):
 /approve <user_id> <plan> <days> - Approve user
@@ -250,6 +299,142 @@ Contact {OWNER_USERNAME} to purchase or for more information.
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("📩 Contact Owner", url=f"tg://user?id={ADMIN_IDS[0]}"))
     bot.send_message(message.chat.id, plans_msg, parse_mode='Markdown', reply_markup=markup)
+
+# Group management commands
+@bot.message_handler(commands=['rules'])
+def rules_command(message):
+    if message.chat.id != GROUP_ID:
+        return
+        
+    group_data = groups_collection.find_one({"group_id": GROUP_ID})
+    rules = group_data.get('rules', "No rules set yet. Please contact admin.")
+    bot.send_message(message.chat.id, f"📜 *Group Rules:*\n\n{rules}", parse_mode='Markdown')
+
+@bot.message_handler(commands=['warn'])
+def warn_user(message):
+    if message.chat.id != GROUP_ID or not is_group_admin(message.chat.id, message.from_user.id):
+        return
+        
+    try:
+        if message.reply_to_message:
+            user_id = message.reply_to_message.from_user.id
+            user = message.reply_to_message.from_user
+        else:
+            cmd_parts = message.text.split()
+            if len(cmd_parts) < 2:
+                bot.reply_to(message, "ℹ️ Usage: /warn @username or reply to a message")
+                return
+            user_id = cmd_parts[1].strip('@')
+            try:
+                user = bot.get_chat_member(message.chat.id, user_id).user
+            except:
+                bot.reply_to(message, "❌ User not found")
+                return
+        
+        # Update warn count in DB
+        users_collection.update_one(
+            {"user_id": user_id, "group_id": GROUP_ID},
+            {"$inc": {"warn_count": 1}},
+            upsert=True
+        )
+        
+        user_data = users_collection.find_one({"user_id": user_id, "group_id": GROUP_ID})
+        warn_count = user_data.get('warn_count', 1)
+        
+        if warn_count >= 3:
+            bot.ban_chat_member(message.chat.id, user_id)
+            bot.reply_to(message, f"🚫 User {user.first_name} has been banned for reaching 3 warnings")
+        else:
+            bot.reply_to(message, f"⚠️ Warning {warn_count}/3 to {user.first_name}")
+            
+    except Exception as e:
+        logging.error(f"Error in warn_user: {e}")
+        bot.reply_to(message, "❌ An error occurred")
+
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if message.chat.id != GROUP_ID or not is_group_admin(message.chat.id, message.from_user.id):
+        return
+        
+    try:
+        if message.reply_to_message:
+            user_id = message.reply_to_message.from_user.id
+            user = message.reply_to_message.from_user
+        else:
+            cmd_parts = message.text.split()
+            if len(cmd_parts) < 2:
+                bot.reply_to(message, "ℹ️ Usage: /ban @username or reply to a message")
+                return
+            user_id = cmd_parts[1].strip('@')
+            try:
+                user = bot.get_chat_member(message.chat.id, user_id).user
+            except:
+                bot.reply_to(message, "❌ User not found")
+                return
+        
+        bot.ban_chat_member(message.chat.id, user_id)
+        bot.reply_to(message, f"🚫 User {user.first_name} has been banned")
+        
+    except Exception as e:
+        logging.error(f"Error in ban_user: {e}")
+        bot.reply_to(message, "❌ An error occurred")
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if message.chat.id != GROUP_ID or not is_group_admin(message.chat.id, message.from_user.id):
+        return
+        
+    try:
+        if message.reply_to_message:
+            user_id = message.reply_to_message.from_user.id
+            user = message.reply_to_message.from_user
+        else:
+            cmd_parts = message.text.split()
+            if len(cmd_parts) < 2:
+                bot.reply_to(message, "ℹ️ Usage: /unban @username or reply to a message")
+                return
+            user_id = cmd_parts[1].strip('@')
+            try:
+                user = bot.get_chat_member(message.chat.id, user_id).user
+            except:
+                bot.reply_to(message, "❌ User not found")
+                return
+        
+        bot.unban_chat_member(message.chat.id, user_id)
+        bot.reply_to(message, f"✅ User {user.first_name} has been unbanned")
+        
+    except Exception as e:
+        logging.error(f"Error in unban_user: {e}")
+        bot.reply_to(message, "❌ An error occurred")
+
+@bot.message_handler(commands=['kick'])
+def kick_user(message):
+    if message.chat.id != GROUP_ID or not is_group_admin(message.chat.id, message.from_user.id):
+        return
+        
+    try:
+        if message.reply_to_message:
+            user_id = message.reply_to_message.from_user.id
+            user = message.reply_to_message.from_user
+        else:
+            cmd_parts = message.text.split()
+            if len(cmd_parts) < 2:
+                bot.reply_to(message, "ℹ️ Usage: /kick @username or reply to a message")
+                return
+            user_id = cmd_parts[1].strip('@')
+            try:
+                user = bot.get_chat_member(message.chat.id, user_id).user
+            except:
+                bot.reply_to(message, "❌ User not found")
+                return
+        
+        bot.ban_chat_member(message.chat.id, user_id)
+        bot.unban_chat_member(message.chat.id, user_id)
+        bot.reply_to(message, f"👢 User {user.first_name} has been kicked")
+        
+    except Exception as e:
+        logging.error(f"Error in kick_user: {e}")
+        bot.reply_to(message, "❌ An error occurred")
 
 # Admin commands
 @bot.message_handler(commands=['approve'])
@@ -380,6 +565,16 @@ def stats_command(message):
         bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
         logging.error(f"Error in stats_command: {e}")
 
+# New member handler
+@bot.message_handler(content_types=['new_chat_members'])
+def handle_new_member(message):
+    if message.chat.id == GROUP_ID:
+        for user in message.new_chat_members:
+            if user.is_bot and user.id != bot.get_me().id:
+                bot.ban_chat_member(message.chat.id, user.id)
+            else:
+                send_welcome_message(message.chat.id, user.id)
+
 # Button handlers
 @bot.message_handler(func=lambda message: message.text in ["🚀 Start Attack", "/attack"])
 def attack_button_handler(message):
@@ -501,6 +696,14 @@ def user_management_button(message):
     )
     bot.send_message(message.chat.id, "👥 *User Management*", parse_mode='Markdown', reply_markup=markup)
 
+@bot.message_handler(func=lambda message: message.text == "👥 Group Settings" and is_user_admin(message.from_user.id))
+def group_settings_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
+    bot.send_message(message.chat.id, "⚙️ *Group Settings*", 
+                    parse_mode='Markdown', reply_markup=create_group_settings_menu())
+
 @bot.message_handler(func=lambda message: message.text == "📊 Stats" and is_user_admin(message.from_user.id))
 def stats_button(message):
     if not should_respond(message.chat.id, message.from_user.id):
@@ -588,14 +791,96 @@ def callback_handler(call):
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
+        elif call.data == "set_welcome":
+            if is_user_admin(call.from_user.id):
+                msg = bot.send_message(call.message.chat.id, "📝 Please send the new welcome message. You can use:\n{name} - User's first name\n{username} - User's @username")
+                bot.register_next_step_handler(msg, process_welcome_message)
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "set_rules":
+            if is_user_admin(call.from_user.id):
+                msg = bot.send_message(call.message.chat.id, "📝 Please send the new group rules")
+                bot.register_next_step_handler(msg, process_rules_message)
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "lock_group":
+            if is_user_admin(call.from_user.id):
+                groups_collection.update_one(
+                    {"group_id": GROUP_ID},
+                    {"$set": {"locked": True}},
+                    upsert=True
+                )
+                bot.answer_callback_query(call.id, "🔒 Group locked - Only admins can post now")
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "unlock_group":
+            if is_user_admin(call.from_user.id):
+                groups_collection.update_one(
+                    {"group_id": GROUP_ID},
+                    {"$set": {"locked": False}},
+                    upsert=True
+                )
+                bot.answer_callback_query(call.id, "🔓 Group unlocked - Everyone can post now")
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "show_rules":
+            group_data = groups_collection.find_one({"group_id": GROUP_ID})
+            rules = group_data.get('rules', "No rules set yet. Please contact admin.")
+            bot.answer_callback_query(call.id, f"📜 Group Rules:\n\n{rules}", show_alert=True)
+                
     except Exception as e:
         logging.error(f"Error in callback handler: {e}")
         bot.answer_callback_query(call.id, "❌ An error occurred", show_alert=True)
+
+def process_welcome_message(message):
+    try:
+        if not is_user_admin(message.from_user.id):
+            return
+            
+        welcome_msg = message.text
+        groups_collection.update_one(
+            {"group_id": GROUP_ID},
+            {"$set": {"welcome_message": welcome_msg}},
+            upsert=True
+        )
+        bot.reply_to(message, "✅ Welcome message updated!")
+    except Exception as e:
+        logging.error(f"Error in process_welcome_message: {e}")
+        bot.reply_to(message, "❌ Failed to update welcome message")
+
+def process_rules_message(message):
+    try:
+        if not is_user_admin(message.from_user.id):
+            return
+            
+        rules = message.text
+        groups_collection.update_one(
+            {"group_id": GROUP_ID},
+            {"$set": {"rules": rules}},
+            upsert=True
+        )
+        bot.reply_to(message, "✅ Group rules updated!")
+    except Exception as e:
+        logging.error(f"Error in process_rules_message: {e}")
+        bot.reply_to(message, "❌ Failed to update group rules")
 
 # Start the bot
 if __name__ == "__main__":
     logging.info("Starting bot...")
     try:
+        # Initialize group settings if not exists
+        if not groups_collection.find_one({"group_id": GROUP_ID}):
+            groups_collection.insert_one({
+                "group_id": GROUP_ID,
+                "welcome_message": f"🌟 Welcome to {OWNER_NAME}'s Group! 🌟\n\n🔹 Follow the rules\n🔹 Be respectful\n🔹 No spam\n\nEnjoy your stay!",
+                "rules": "1. No spam\n2. Be respectful\n3. Follow admin instructions",
+                "locked": False
+            })
+            
         bot.polling(none_stop=True)
     except Exception as e:
         logging.error(f"Bot crashed: {e}")
