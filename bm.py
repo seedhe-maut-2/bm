@@ -19,8 +19,8 @@ logging.basicConfig(
 # Constants
 TOKEN = '7713354946:AAFdS8AbgRyPgL8d_5utsURl2rMl1Y2lZro'
 MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
-CHANNEL_ID = -1002512368825
-ADMIN_IDS = [8167507955]
+GROUP_ID = -4646278924  # Your group ID
+ADMIN_IDS = [8167507955]  # Your admin ID
 OWNER_NAME = "Seedhe Maut"
 OWNER_USERNAME = "@seedhe_maut_bot"
 BLOCKED_PORTS = [8700, 20000, 443, 17500, 9031, 20002, 20001]
@@ -39,7 +39,16 @@ bot = telebot.TeleBot(TOKEN)
 user_attack_details = {}
 active_attacks = {}
 
-# Utility functions
+def should_respond(chat_id, user_id):
+    """Check if bot should respond in this chat"""
+    # Always respond to admins in private chats
+    if chat_id > 0 and user_id in ADMIN_IDS:
+        return True
+    # Only respond in group if message is from admin
+    if chat_id == GROUP_ID and user_id in ADMIN_IDS:
+        return True
+    return False
+
 def is_user_admin(user_id):
     return user_id in ADMIN_IDS
 
@@ -179,8 +188,10 @@ Thank you for being a premium user!
 # Message handlers
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    user_id = message.from_user.id
-    if is_user_admin(user_id):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
+    if is_user_admin(message.from_user.id):
         bot.send_message(message.chat.id, "👑 *Admin Panel* 👑", 
                         parse_mode='Markdown', reply_markup=create_admin_menu())
     else:
@@ -188,10 +199,15 @@ def start_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
     send_help_message(message.chat.id)
 
 @bot.message_handler(commands=['mystats'])
 def mystats_command(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
     user_id = message.from_user.id
     user_data = users_collection.find_one({"user_id": user_id}) or {}
     stats_msg = f"""
@@ -206,6 +222,9 @@ def mystats_command(message):
 
 @bot.message_handler(commands=['buy'])
 def buy_command(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
     plans_msg = f"""
 💎 *Available Plans* 💎
 
@@ -235,39 +254,43 @@ Contact {OWNER_USERNAME} to purchase or for more information.
 # Admin commands
 @bot.message_handler(commands=['approve'])
 def approve_user(message):
-    user_id = message.from_user.id
-    if not is_user_admin(user_id):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
+    if not is_user_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ *Access Denied*", parse_mode='Markdown')
         return
 
     try:
         cmd_parts = message.text.split()
         if len(cmd_parts) != 4:
-            bot.send_message(message.chat.id, "ℹ️ *Usage:* /approve <user_id> <plan(1-3)> <days>", parse_mode='Markdown')
+            bot.send_message(message.chat.id, "ℹ️ *Usage:* `/approve <user_id> <plan(1-3)> <days>`", parse_mode='Markdown')
             return
 
         target_user_id = int(cmd_parts[1])
         plan = min(max(int(cmd_parts[2]), 1), 3)  # Clamp between 1-3
         days = int(cmd_parts[3])
 
-        valid_until = (datetime.now() + timedelta(days=days)).isoformat() if days > 0 else "Lifetime"
+        valid_until = (datetime.now() + timedelta(days=days)).date().isoformat() if days > 0 else "Lifetime"
         users_collection.update_one(
             {"user_id": target_user_id},
             {"$set": {
                 "plan": plan,
                 "valid_until": valid_until,
-                "approved_by": user_id,
+                "approved_by": message.from_user.id,
                 "approved_at": datetime.now().isoformat()
             }},
             upsert=True
         )
-        bot.send_message(message.chat.id, f"""
+        
+        response_msg = f"""
 ✅ *User Approved*
-🔹 *ID:* {target_user_id}
+🔹 *ID:* `{target_user_id}`
 🔹 *Plan:* {plan}
 🔹 *Duration:* {days} days
 🔹 *Valid Until:* {valid_until}
-""", parse_mode='Markdown')
+"""
+        bot.send_message(message.chat.id, response_msg, parse_mode='Markdown')
         
         # Notify the user
         try:
@@ -283,28 +306,36 @@ You can now use all bot features.
             logging.error(f"Could not notify user {target_user_id}: {e}")
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ *Error:* {str(e)}", parse_mode='Markdown')
+        error_msg = f"❌ *Error:* {str(e)}"
+        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
         logging.error(f"Error in approve_user: {e}")
 
 @bot.message_handler(commands=['disapprove'])
 def disapprove_user(message):
-    user_id = message.from_user.id
-    if not is_user_admin(user_id):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
+    if not is_user_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ *Access Denied*", parse_mode='Markdown')
         return
 
     try:
         cmd_parts = message.text.split()
         if len(cmd_parts) != 2:
-            bot.send_message(message.chat.id, "ℹ️ *Usage:* /disapprove <user_id>", parse_mode='Markdown')
+            bot.send_message(message.chat.id, "ℹ️ *Usage:* `/disapprove <user_id>`", parse_mode='Markdown')
             return
 
         target_user_id = int(cmd_parts[1])
         users_collection.update_one(
             {"user_id": target_user_id},
-            {"$set": {"plan": 0, "valid_until": "", "disapproved_at": datetime.now().isoformat()}}
+            {"$set": {
+                "plan": 0, 
+                "valid_until": "", 
+                "disapproved_at": datetime.now().isoformat(),
+                "disapproved_by": message.from_user.id
+            }}
         )
-        bot.send_message(message.chat.id, f"❌ *User {target_user_id} has been disapproved*", parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"❌ *User `{target_user_id}` has been disapproved*", parse_mode='Markdown')
         
         # Notify the user
         try:
@@ -318,13 +349,16 @@ Contact admin for more information.
             logging.error(f"Could not notify user {target_user_id}: {e}")
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ *Error:* {str(e)}", parse_mode='Markdown')
+        error_msg = f"❌ *Error:* {str(e)}"
+        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
         logging.error(f"Error in disapprove_user: {e}")
 
 @bot.message_handler(commands=['stats'])
 def stats_command(message):
-    user_id = message.from_user.id
-    if not is_user_admin(user_id):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
+    if not is_user_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ *Access Denied*", parse_mode='Markdown')
         return
 
@@ -339,16 +373,19 @@ def stats_command(message):
 👥 *Total Users:* {total_users}
 💎 *Premium Users:* {premium_users}
 ⚡ *Active Attacks:* {active_attacks_count}
-🛠 *Bot Uptime:* {timedelta(seconds=(datetime.now() - start_time).total_seconds())}
 """
         bot.send_message(message.chat.id, stats_msg, parse_mode='Markdown')
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ *Error generating stats:* {str(e)}", parse_mode='Markdown')
+        error_msg = f"❌ *Error generating stats:* {str(e)}"
+        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
         logging.error(f"Error in stats_command: {e}")
 
 # Button handlers
 @bot.message_handler(func=lambda message: message.text in ["🚀 Start Attack", "/attack"])
 def attack_button_handler(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
     user_id = message.from_user.id
     if not check_user_approval(user_id):
         bot.send_message(message.chat.id, """
@@ -372,6 +409,9 @@ Example:
 
 def process_attack_ip_port(message):
     try:
+        if not should_respond(message.chat.id, message.from_user.id):
+            return
+            
         user_id = message.from_user.id
         args = message.text.split()
         
@@ -408,11 +448,15 @@ def process_attack_ip_port(message):
     except ValueError:
         bot.send_message(message.chat.id, "❌ *Invalid port number!*", parse_mode='Markdown')
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ *Error:* {str(e)}", parse_mode='Markdown')
+        error_msg = f"❌ *Error:* {str(e)}"
+        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
         logging.error(f"Error in process_attack_ip_port: {e}")
 
 @bot.message_handler(func=lambda message: message.text == "⏹ Stop Attack")
 def stop_attack_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
     user_id = message.from_user.id
     attack_details = user_attack_details.get(user_id)
     
@@ -434,14 +478,21 @@ def stop_attack_button(message):
 
 @bot.message_handler(func=lambda message: message.text == "ℹ️ Help")
 def help_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
     send_help_message(message.chat.id)
 
 @bot.message_handler(func=lambda message: message.text == "📊 My Plan")
 def myplan_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
     send_plan_info(message.chat.id, message.from_user.id)
 
 @bot.message_handler(func=lambda message: message.text == "👥 User Management" and is_user_admin(message.from_user.id))
 def user_management_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
+        
     markup = InlineKeyboardMarkup()
     markup.add(
         InlineKeyboardButton("📝 Approve User", callback_data="admin_approve"),
@@ -452,10 +503,14 @@ def user_management_button(message):
 
 @bot.message_handler(func=lambda message: message.text == "📊 Stats" and is_user_admin(message.from_user.id))
 def stats_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
     stats_command(message)
 
 @bot.message_handler(func=lambda message: message.text == "🔙 Main Menu")
 def main_menu_button(message):
+    if not should_respond(message.chat.id, message.from_user.id):
+        return
     send_welcome_message(message.chat.id)
 
 # Callback handlers
@@ -508,13 +563,13 @@ def callback_handler(call):
             
         elif call.data == "admin_approve":
             if is_user_admin(call.from_user.id):
-                bot.send_message(call.message.chat.id, "ℹ️ *Usage:* /approve <user_id> <plan(1-3)> <days>", parse_mode='Markdown')
+                bot.send_message(call.message.chat.id, "ℹ️ *Usage:* `/approve <user_id> <plan(1-3)> <days>`", parse_mode='Markdown')
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
         elif call.data == "admin_disapprove":
             if is_user_admin(call.from_user.id):
-                bot.send_message(call.message.chat.id, "ℹ️ *Usage:* /disapprove <user_id>", parse_mode='Markdown')
+                bot.send_message(call.message.chat.id, "ℹ️ *Usage:* `/disapprove <user_id>`", parse_mode='Markdown')
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
@@ -522,7 +577,7 @@ def callback_handler(call):
             if is_user_admin(call.from_user.id):
                 premium_users = list(users_collection.find({"plan": {"$gt": 0}}).limit(10))
                 users_list = "\n".join([
-                    f"🔹 {u['user_id']} - Plan {u['plan']} (Until {u.get('valid_until', '?')})"
+                    f"🔹 `{u['user_id']}` - Plan {u['plan']} (Until {u.get('valid_until', '?')})"
                     for u in premium_users
                 ])
                 bot.send_message(
@@ -539,10 +594,8 @@ def callback_handler(call):
 
 # Start the bot
 if __name__ == "__main__":
-    start_time = datetime.now()
-    logging.info(f"Starting bot at {start_time}")
+    logging.info("Starting bot...")
     try:
         bot.polling(none_stop=True)
     except Exception as e:
         logging.error(f"Bot crashed: {e}")
-        # Implement restart logic or notification here
