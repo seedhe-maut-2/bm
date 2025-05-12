@@ -19,10 +19,10 @@ logging.basicConfig(
 # Constants
 TOKEN = '7713354946:AAFdS8AbgRyPgL8d_5utsURl2rMl1Y2lZro'
 MONGO_URI = 'mongodb+srv://zeni:1I8uJt78Abh4K5lo@zeni.v7yls.mongodb.net/?retryWrites=true&w=majority&appName=zeni'
-ADMIN_IDS = [8167507955]  # Your admin ID
+ADMIN_IDS = [8167507955]
 OWNER_USERNAME = "@seedhe_maut_bot"
 BLOCKED_PORTS = [8700, 20000, 443, 17500, 9031, 20002, 20001]
-MAX_ATTACK_DURATION = 600  # 10 minutes
+MAX_ATTACK_DURATION = 600
 THREADS_COUNT = 900
 
 # Initialize MongoDB
@@ -178,6 +178,21 @@ def show_stats(chat_id):
 ⚡ *Active Attacks:* {active_attacks_count}
 """
     bot.send_message(chat_id, stats_msg, parse_mode='Markdown')
+
+def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode='Markdown'):
+    try:
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+        return True
+    except Exception as e:
+        if "message is not modified" not in str(e):
+            logging.error(f"Error editing message: {e}")
+        return False
 
 # Message handlers
 @bot.message_handler(commands=['start'])
@@ -400,8 +415,13 @@ Example:
                     InlineKeyboardButton("❌ Disapprove User", callback_data="admin_disapprove"),
                     InlineKeyboardButton("📊 List Users", callback_data="admin_list_users")
                 )
-                bot.edit_message_text("👥 *User Management*", call.message.chat.id, call.message.message_id, 
-                                    parse_mode='Markdown', reply_markup=markup)
+                if not safe_edit_message(
+                    call.message.chat.id,
+                    call.message.message_id,
+                    "👥 *User Management*",
+                    markup
+                ):
+                    bot.answer_callback_query(call.id)
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
@@ -414,11 +434,21 @@ Example:
                 
         elif call.data == "main_menu":
             if is_user_admin(call.from_user.id):
-                bot.edit_message_text("👑 *Admin Panel*", call.message.chat.id, call.message.message_id,
-                                    parse_mode='Markdown', reply_markup=create_admin_menu())
+                if not safe_edit_message(
+                    call.message.chat.id,
+                    call.message.message_id,
+                    "👑 *Admin Panel*",
+                    create_admin_menu()
+                ):
+                    bot.answer_callback_query(call.id)
             else:
-                bot.edit_message_text("🌟 *Main Menu*", call.message.chat.id, call.message.message_id,
-                                   parse_mode='Markdown', reply_markup=create_main_menu())
+                if not safe_edit_message(
+                    call.message.chat.id,
+                    call.message.message_id,
+                    "🌟 *Main Menu*",
+                    create_main_menu()
+                ):
+                    bot.answer_callback_query(call.id)
                 
         elif call.data.startswith("confirm_attack_"):
             user_id = int(call.data.split("_")[2])
