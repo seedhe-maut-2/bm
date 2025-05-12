@@ -165,6 +165,20 @@ Thank you for being a premium user!
     markup.add(InlineKeyboardButton("💎 Upgrade Plan", url=f"tg://user?id={ADMIN_IDS[0]}"))
     bot.send_message(chat_id, plan_msg, parse_mode='Markdown', reply_markup=markup)
 
+def show_stats(chat_id):
+    total_users = users_collection.count_documents({})
+    premium_users = users_collection.count_documents({"plan": {"$gt": 0}})
+    active_attacks_count = len(active_attacks)
+    
+    stats_msg = f"""
+📊 *Bot Statistics*
+
+👥 *Total Users:* {total_users}
+💎 *Premium Users:* {premium_users}
+⚡ *Active Attacks:* {active_attacks_count}
+"""
+    bot.send_message(chat_id, stats_msg, parse_mode='Markdown')
+
 # Message handlers
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -191,6 +205,13 @@ def mystats_command(message):
 🔸 *Account Valid Until:* {user_data.get('valid_until', 'Not specified')}
 """
     bot.send_message(message.chat.id, stats_msg, parse_mode='Markdown')
+
+@bot.message_handler(commands=['stats'])
+def stats_command(message):
+    if not is_user_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ *Access Denied*", parse_mode='Markdown')
+        return
+    show_stats(message.chat.id)
 
 @bot.message_handler(commands=['buy'])
 def buy_command(message):
@@ -220,8 +241,26 @@ Contact {OWNER_USERNAME} to purchase or for more information.
     markup.add(InlineKeyboardButton("📩 Contact Owner", url=f"tg://user?id={ADMIN_IDS[0]}"))
     bot.send_message(message.chat.id, plans_msg, parse_mode='Markdown', reply_markup=markup)
 
+@bot.message_handler(commands=['attack'])
+def attack_command(message):
+    user_id = message.from_user.id
+    if not check_user_approval(user_id):
+        bot.send_message(message.chat.id, "🔒 You don't have permission to use this feature!")
+        return
+
+    msg = bot.send_message(message.chat.id, """
+🎯 *Attack Setup*
+
+Please provide the target in this format:
+`IP PORT`
+
+Example:
+`1.1.1.1 80`
+""", parse_mode='Markdown')
+    bot.register_next_step_handler(msg, process_attack_ip_port)
+
 # Admin commands
-@bot.message_handler(commands=['approve', 'disapprove', 'stats'])
+@bot.message_handler(commands=['approve', 'disapprove'])
 def admin_commands(message):
     if not is_user_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ *Access Denied*", parse_mode='Markdown')
@@ -303,20 +342,6 @@ Contact admin for more information.
             except Exception as e:
                 logging.error(f"Could not notify user {target_user_id}: {e}")
 
-        elif command == 'stats':
-            total_users = users_collection.count_documents({})
-            premium_users = users_collection.count_documents({"plan": {"$gt": 0}})
-            active_attacks_count = len(active_attacks)
-            
-            stats_msg = f"""
-📊 *Bot Statistics*
-
-👥 *Total Users:* {total_users}
-💎 *Premium Users:* {premium_users}
-⚡ *Active Attacks:* {active_attacks_count}
-"""
-            bot.send_message(message.chat.id, stats_msg, parse_mode='Markdown')
-
     except Exception as e:
         error_msg = f"❌ *Error:* {str(e)}"
         bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
@@ -382,7 +407,8 @@ Example:
                 
         elif call.data == "stats":
             if is_user_admin(call.from_user.id):
-                stats_command(call.message)
+                show_stats(call.message.chat.id)
+                bot.answer_callback_query(call.id)
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
@@ -441,12 +467,14 @@ Example:
         elif call.data == "admin_approve":
             if is_user_admin(call.from_user.id):
                 bot.send_message(call.message.chat.id, "ℹ️ *Usage:* `/approve <user_id> <plan(1-3)> <days>`", parse_mode='Markdown')
+                bot.answer_callback_query(call.id)
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
         elif call.data == "admin_disapprove":
             if is_user_admin(call.from_user.id):
                 bot.send_message(call.message.chat.id, "ℹ️ *Usage:* `/disapprove <user_id>`", parse_mode='Markdown')
+                bot.answer_callback_query(call.id)
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
@@ -462,6 +490,7 @@ Example:
                     f"💎 *Premium Users*\n{users_list}\n\nTotal: {len(premium_users)}",
                     parse_mode='Markdown'
                 )
+                bot.answer_callback_query(call.id)
             else:
                 bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
                 
